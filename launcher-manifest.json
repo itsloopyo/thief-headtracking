@@ -1,0 +1,18 @@
+{
+    "schema_version": 2,
+    "mod_info": {
+        "name": "ThiefHeadTracking",
+        "version": "0.0.0",
+        "game_id": "thief"
+    },
+    "strategy": "AsiLoader",
+    "delivery_mode": "manifest",
+
+    "files": [
+        { "source": "vendor/ultimate-asi-loader/dinput8.dll", "target": "Binaries2/Win64/dinput8.dll" },
+        { "source": "plugins/ThiefHeadTracking.asi", "target": "Binaries2/Win64/ThiefHeadTracking.asi" }
+    ],
+
+    "runtime_requirements": [],
+    "dependencies": []
+}

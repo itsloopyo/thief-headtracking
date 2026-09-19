@@ -1,0 +1,213 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 itsloopyo
+
+#include "tracking_runtime.h"
+
+#include "logging.h"
+#include "ue3_math.h"
+
+namespace ThiefHeadTracking {
+
+namespace {
+
+// Distinct reasons a frame can produce no pose. One slot per branch in SampleFrame, so
+// the table cannot fill before every reason has had its line.
+constexpr int kMaxEmptyFrameReasons = 4;
+
+// The pipeline's own finite checks stop at the wire: OpenTrackPacket rejects a
+// non-finite datagram, but the sensitivities the processor multiplies it by come from
+// the INI, where magnitude is deliberately unbounded because a large one is legitimate
+// tuning. A large enough sensitivity overflows the product to infinity, and from here
+// it would reach the FRotator conversion and the camera location. Drop the channel
+// instead, and say so once - a silently dropped pose reads in game exactly like a
+// tracker that has stopped sending.
+void ReportNonFinite(const char* channel) {
+    static bool s_warned = false;
+    if (s_warned) return;
+    s_warned = true;
+    Log::Line("WARN: the processed %s came out non-finite and is being dropped. Check "
+              "the Sensitivity and Position values in the INI: a large enough one "
+              "overflows the pose it multiplies.", channel);
+}
+
+// Names the reason a frame produced no pose, once per distinct reason.
+//
+// "Head tracking stopped for a few seconds and started again" is the hardest report to
+// act on, because the camera hook cannot tell an empty pose from a tracker that went
+// quiet. Saying which of the gates closed turns it into one line.
+//
+// Compared by POINTER, not by content: every caller passes a string literal, so identity
+// is the cheapest way to say "this reason has already been reported".
+void ReportEmptyFrame(const char* why) {
+    static const char* s_seen[kMaxEmptyFrameReasons] = {};
+    static int s_count = 0;
+    for (int i = 0; i < s_count; ++i) {
+        if (s_seen[i] == why) return;
+    }
+    if (s_count == kMaxEmptyFrameReasons) return;
+    s_seen[s_count++] = why;
+    Log::Line("Tracking produced no pose: %s", why);
+}
+
+}  // namespace
+
+void TrackingRuntime::ConfigureRotation() {
+    cameraunlock::SensitivitySettings sens;
+    sens.yaw = m_cfg.sens_yaw;
+    sens.pitch = m_cfg.sens_pitch;
+    sens.roll = m_cfg.sens_roll;
+    sens.invert_yaw = m_cfg.invert_yaw;
+    sens.invert_pitch = m_cfg.invert_pitch;
+    sens.invert_roll = m_cfg.invert_roll;
+    m_session.GetProcessor().SetSensitivity(sens);
+}
+
+void TrackingRuntime::ConfigurePosition() {
+    cameraunlock::PositionSettings pos;
+    pos.sensitivity_x = m_cfg.pos_sens_x;
+    pos.sensitivity_y = m_cfg.pos_sens_y;
+    pos.sensitivity_z = m_cfg.pos_sens_z;
+    pos.limit_x = m_cfg.pos_limit_x;
+    pos.limit_y = m_cfg.pos_limit_y;
+    // The INI exposes one vertical limit, so mirror it into the downward bound the way
+    // PositionSettings::Symmetric does. Leaving limit_y_down at its struct default made
+    // a raised LimitY grow the upward budget only, silently and with nothing in the INI
+    // to explain the asymmetry.
+    pos.limit_y_down = m_cfg.pos_limit_y;
+    pos.limit_z = m_cfg.pos_limit_z;
+    pos.limit_z_back = m_cfg.pos_limit_z_back;
+    m_session.GetPositionProcessor().SetSettings(pos);
+}
+
+void TrackingRuntime::ConfigureSmoothing() {
+    // Must run after ConfigurePosition, whose SetSettings would otherwise overwrite the
+    // smoothing fields. The session forwards both values to the rotation AND position
+    // processors and re-reads the receiver's connection locality inside every Update()
+    // to pick the one that applies. Without IsRemoteConnection() on the receiver that
+    // selection silently pins to local, so assert the trait.
+    static_assert(decltype(m_session)::kHasRemoteConnection,
+                  "receiver must expose IsRemoteConnection()");
+    m_session.SetLocalSmoothing(m_cfg.local_smoothing);
+    m_session.SetRemoteSmoothing(m_cfg.remote_smoothing);
+}
+
+void TrackingRuntime::Start(const Config& cfg, const std::string& iniPath) {
+    m_cfg = cfg;
+    m_iniPath = iniPath;
+
+    ConfigureRotation();
+    ConfigurePosition();
+    ConfigureSmoothing();
+
+    m_enabled.store(m_cfg.enabled_on_startup, std::memory_order_relaxed);
+    m_worldSpaceYaw.store(m_cfg.world_space_yaw, std::memory_order_relaxed);
+    // Straight from the INI, and never reset from here on. The ADS mode is the player's
+    // choice; start-up logic that quietly puts it back to the default is a bug.
+    m_adsMode.store(m_cfg.ads_mode, std::memory_order_relaxed);
+    m_session.SetMode(m_cfg.position_enabled
+                          ? cameraunlock::TrackingMode::RotationAndPosition
+                          : cameraunlock::TrackingMode::RotationOnly);
+
+    m_receiver.SetLog([](const std::string& msg) {
+        Log::Line("UDP: %s", msg.c_str());
+    });
+
+    if (m_receiver.Start(m_cfg.udp_port)) {
+        Log::Line("UDP receiver listening on port %u", m_cfg.udp_port);
+    } else {
+        Log::Line("WARN: UDP receiver did not bind immediately on port %u; background retry active", m_cfg.udp_port);
+    }
+}
+
+void TrackingRuntime::Stop() {
+    m_receiver.Stop();
+}
+
+void TrackingRuntime::ToggleEnabled() {
+    bool prev = m_enabled.load(std::memory_order_relaxed);
+    m_enabled.store(!prev, std::memory_order_relaxed);
+    Log::Line("Tracking %s", !prev ? "enabled" : "disabled");
+}
+
+void TrackingRuntime::CycleTrackingMode() {
+    switch (m_session.CycleMode()) {
+        case cameraunlock::TrackingMode::RotationAndPosition:
+            Log::Line("Tracking mode: rotation + position (6DOF)");
+            break;
+        case cameraunlock::TrackingMode::RotationOnly:
+            Log::Line("Tracking mode: rotation only");
+            break;
+        case cameraunlock::TrackingMode::PositionOnly:
+            Log::Line("Tracking mode: position only");
+            break;
+    }
+}
+
+// Advances the two-slot cycle, writes it back to the INI, and names the mode it switched
+// to.
+//
+// The verdict does not have to be re-run from here: the camera hook reads GetAdsMode()
+// fresh on every scene view, so a press mid-aim changes what that same aim does on the next
+// rendered frame rather than on the next aim.
+//
+// The toast strings are core's, and they are the cross-mod contract rather than the
+// delivery mechanism. This mod draws no on-screen text - its only overlay is the game's own
+// reticle, moved - so the string goes to the log and the README says that is where the mode
+// is named.
+void TrackingRuntime::CycleAdsMode() {
+    const AdsMode next = AdvanceAdsMode(m_adsMode.load(std::memory_order_relaxed));
+    m_adsMode.store(next, std::memory_order_relaxed);
+
+    Log::Line("%s", cameraunlock::ads::AdsModeToast(next));
+    if (!SaveAdsMode(m_iniPath.c_str(), next)) {
+        Log::Line("WARN: could not write AdsMode back to the INI, so this choice will not "
+                  "survive a restart. The game directory is not writable by this account.");
+    }
+}
+
+void TrackingRuntime::ToggleYawMode() {
+    bool prev = m_worldSpaceYaw.load(std::memory_order_relaxed);
+    m_worldSpaceYaw.store(!prev, std::memory_order_relaxed);
+    Log::Line("Yaw mode: %s", !prev ? "world-space (horizon-locked)" : "camera-local");
+}
+
+FrameSample TrackingRuntime::SampleFrame() {
+    FrameSample out;
+
+    if (!m_enabled.load(std::memory_order_relaxed)) {
+        ReportEmptyFrame("tracking is switched off");
+        return out;
+    }
+    if (!m_receiver.IsReceiving()) {
+        ReportEmptyFrame("no packets are arriving from the tracker");
+        return out;
+    }
+
+    if (!m_session.Update(m_clock.Tick())) {
+        ReportEmptyFrame("the session had no fresh sample to process this frame");
+        return out;
+    }
+
+    // GetRotation reports success in PositionOnly mode too, handing back zeros. Taking
+    // that as a rotation channel let the hook run its rotation path with no head input
+    // at all, which still rewrote the engine's pitch through the clamp - the mod moving
+    // the view while the player had rotation switched off.
+    out.has_rotation = m_session.IsRotationActive() &&
+                       m_session.GetRotation(out.yaw, out.pitch, out.roll);
+    if (out.has_rotation && !AllFinite(out.yaw, out.pitch, out.roll)) {
+        out.has_rotation = false;
+        ReportNonFinite("head rotation");
+    }
+
+    out.has_position = m_session.GetPositionOffset(out.pos_x, out.pos_y, out.pos_z);
+    if (out.has_position && !AllFinite(out.pos_x, out.pos_y, out.pos_z)) {
+        out.has_position = false;
+        ReportNonFinite("head position");
+    }
+    if (!out.has_rotation && !out.has_position) {
+        ReportEmptyFrame("the processor returned neither a rotation nor a position");
+    }
+    return out;
+}
+
+}  // namespace ThiefHeadTracking

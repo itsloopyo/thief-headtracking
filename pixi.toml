@@ -1,0 +1,62 @@
+[workspace]
+name = "thief-head-tracking"
+version = "0.0.0"
+description = "Head tracking mod for Thief using OpenTrack"
+license = "MIT"
+channels = ["conda-forge"]
+platforms = ["win-64"]
+
+[tasks]
+update-submodule = "git submodule update --remote cameraunlock-core && powershell -NoProfile -ExecutionPolicy Bypass -File cameraunlock-core/scripts/update-submodule.ps1"
+# Sync the cameraunlock-core submodule to its tracked branch.
+sync = "git submodule update --remote cameraunlock-core"
+
+# Configure CMake build (x64). Steam starts Binaries2\Win32, which is the launcher;
+# on a 64-bit Windows with the launcher's own Run32Bit setting off - the default - it
+# spawns ..\Win64\Shipping-ThiefGame.exe -nolauncher and exits, so the 64-bit build is
+# the process the game actually runs in.
+setup = { cmd = """
+    powershell -Command "if (-not (Test-Path 'build')) { cmake -B build -A x64 } else { Write-Host 'Build directory exists, skipping setup' -ForegroundColor Yellow }"
+""" }
+
+# Build debug configuration.
+build = { cmd = "cmake --build build --config Debug", depends-on = ["setup"] }
+
+# Build release configuration.
+build-release = { cmd = "cmake --build build --config Release", depends-on = ["setup"] }
+
+# Build and run the native unit tests (pure INI, rotator, projection and clamp logic).
+test = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/run-tests.ps1" }
+
+# Build + deploy release to the game directory.
+install = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/deploy.ps1 Release", depends-on = ["build-release"] }
+
+# Remove the mod from the game directory. /y keeps it prompt-free under pixi (no TTY).
+uninstall = "scripts/uninstall.cmd /y"
+
+# Package the installer ZIP.
+package = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1", depends-on = ["build-release"] }
+
+# Clean build artifacts. No $vars in inline commands - pixi's shell eats them before PowerShell runs.
+clean = { cmd = """
+    powershell -Command "if (Test-Path build) { Remove-Item build -Recurse -Force }; if (Test-Path build-tests) { Remove-Item build-tests -Recurse -Force }; if (Test-Path bin) { Remove-Item bin -Recurse -Force }; Write-Host 'Build artifacts cleaned' -ForegroundColor Green"
+""" }
+
+# Automated release workflow (version bump, changelog, tag, push).
+release = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/release.ps1" }
+
+# Publish a dev pre-release from the current tree. -NoNexusZip is passed by the shim:
+# this mod is installer-only, so there is no Nexus ZIP for the publisher to expect.
+release-nightly = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/release-nightly.ps1" }
+
+# The two release gates, runnable on their own. `package` already runs both and refuses to
+# finish when either fails; these are for checking a manifest or a notices edit without
+# rebuilding. Both read the ZIPs already in release/, so package first.
+validate-manifest = { cmd = "node cameraunlock-core/scripts/validate-manifest.mjs" }
+validate-notices = { cmd = "node cameraunlock-core/scripts/validate-notices.mjs" }
+
+# Bump vendored Ultimate ASI Loader to the latest pinned upstream. Manual; commit the result.
+update-deps = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/update-deps.ps1" }
+
+[dependencies]
+# No pixi dependencies - using system CMake and Visual Studio.
