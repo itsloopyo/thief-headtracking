@@ -61,10 +61,10 @@ CalcSceneView_t g_origCalcSceneView = nullptr;
 GetPlayerViewPoint_t g_origGetViewPoint = nullptr;
 TrackingRuntime* g_tracking = nullptr;
 
-// The ADS transition and the pose it is measured from. Touched only from the viewpoint
-// detour, which runs on the game thread for the scene-view caller alone, so it needs no
-// synchronisation of its own - the same restriction TrackingRuntime::SampleFrame relies on.
-AdsController g_ads;
+// Eases the lean out while the bow is drawn. Touched only from the viewpoint detour, which
+// runs on the game thread for the scene-view caller alone, so it needs no synchronisation
+// of its own - the same restriction TrackingRuntime::SampleFrame relies on.
+LeanEase g_leanEase;
 
 // Everything the detours read that is only known once the build profile is matched and
 // the config is loaded. Written once at install time, before either detour is enabled,
@@ -231,33 +231,6 @@ void PublishAimMarker(const void* controller, const UE3Vector& cleanEye, const U
     marker.active.store(true, std::memory_order_relaxed);
 }
 
-// The frame's head pose in the shape the ADS transition works on, and back again.
-//
-// The blend happens HERE, on the tracker-basis pose, ahead of the engine boundary rather
-// than after it: the relative yaw a tracked aim feeds has to be measured in the same
-// wrapped -180..180 degrees the tracker reports, and everything downstream - the axis
-// conversion, the zoom scaling, the lean clamp, the reticle projection - then describes
-// the camera the player is actually looking through.
-AdsPose ToAdsPose(const FrameSample& s) {
-    AdsPose pose;
-    pose.pitch = s.pitch;
-    pose.yaw = s.yaw;
-    pose.roll = s.roll;
-    pose.x = s.pos_x;
-    pose.y = s.pos_y;
-    pose.z = s.pos_z;
-    return pose;
-}
-
-void ApplyAdsPose(const AdsPose& pose, FrameSample* s) {
-    s->pitch = pose.pitch;
-    s->yaw = pose.yaw;
-    s->roll = pose.roll;
-    s->pos_x = pose.x;
-    s->pos_y = pose.y;
-    s->pos_z = pose.z;
-}
-
 // Moves the viewpoint by the tracked head position, and reports the lean it applied in
 // the engine's own right/up/forward basis so the marker can publish it.
 //
@@ -382,50 +355,33 @@ void __fastcall GetPlayerViewPointDetour(void* self, void* outLoc, void* outRot)
         ReadGate(static_cast<const std::uint8_t*>(self), loc, &fov, &baseFov,
                  &constrainedAspect, &aiming, &cam);
 
+    ReportGate(gate, fov);
     if (gate != 0) {
-        // A menu or a load outranks the sights: it keeps its own reason,
-        // and the transition is dropped so the next aim re-enters from a live pose
-        // rather than resuming against one from before the suppression.
-        g_ads.Reset();
-        ReportGate(gate, fov);
+        g_leanEase.Reset();
         StandDown();
         return;
     }
 
     FrameSample s = tracking->SampleFrame();
     if (!s.has_rotation && !s.has_position) {
-        g_ads.Reset();
+        g_leanEase.Reset();
         StandDown();
         return;
     }
-
-    // The sights are polled from the game on every frame and handed to the transition
-    // directly. Deriving them from the gate verdict would make the fade start raising the
-    // instant it finished lowering, because in `paused` the fade is what closes that gate.
-    const AdsMode adsMode = tracking->GetAdsMode();
-    // A real sample on EITHER channel counts as live. Gating on rotation alone means that
-    // in position-only tracking mode the entry pose is never captured, so a tracked aim
-    // carries whatever lean the player happened to be holding straight into the sights
-    // instead of zeroing it at the entry frame.
-    const AdsFrame ads = g_ads.Update(adsMode, aiming, s.has_rotation || s.has_position,
-                                      ToAdsPose(s), GetTickCount64());
-    gate = ApplyAdsToGate(aiming, adsMode, ads.pose_gone);
-    ReportGate(gate, fov);
-    if (gate != 0) {
-        // `paused`, and the transition has run the head pose all the way down. Hand the
-        // camera back - and leave the transition alone, because this is the one
-        // suppression it caused itself and has to survive.
-        StandDown();
-        return;
-    }
-    ApplyAdsPose(ads.pose, &s);
 
     const float zoom = ZoomFactor(fov, baseFov);
 
     float leanRuf[3] = { 0.0f, 0.0f, 0.0f };
     if (s.has_position) {
+        // Polled from the game every frame rather than latched, so a missed edge heals on
+        // the next one. Rotation is deliberately left out of this.
+        const float leanScale = g_leanEase.Update(aiming, GetTickCount64());
+        s.pos_x *= leanScale;
+        s.pos_y *= leanScale;
+        s.pos_z *= leanScale;
         ApplyPositionOffset(s, clean, zoom, loc, leanRuf);
     } else {
+        g_leanEase.Reset();
         ResetCameraCollision();
     }
     if (s.has_rotation) {

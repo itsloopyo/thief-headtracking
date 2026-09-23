@@ -107,12 +107,9 @@ if(THIEF_BUILD_TESTS)
     # geometry - is header-only and needs no game.
     thief_add_test(thief_tests src/config.cpp src/build_profile.cpp)
 
-    # The ADS behaviour, in two suites because they fail for different reasons: the pose
-    # tests cover the transition and the entry-relative pose, the gate tests cover which
-    # frames tracking stands down on and how the setting is read. Both drive src/ads.h,
-    # which is header-only, so neither needs a game or a build profile.
-    thief_add_test(ads_pose_tests)
-    thief_add_test(ads_gate_tests)
+    # The lean easing while the bow is drawn. src/ads.h is header-only, so it needs no game
+    # or build profile.
+    thief_add_test(ads_lean_tests)
     thief_add_test(reticle_projection_tests)
     thief_add_test(hud_accessor_tests)
     thief_add_test(game_state_tests src/game_state.cpp src/camera_diagnostics.cpp

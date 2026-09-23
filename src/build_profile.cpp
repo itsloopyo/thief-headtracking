@@ -129,9 +129,9 @@ static const BuildProfile kSteamProfile_20141007 = {
 //   reached off the player pawn at one fixed offset by three functions (RVA 0x8AB160,
 //   0x8AB530, 0xC0E740) and its flag word is at component+0xC0 with at least two live
 //   bits, but which bit is "the bow is drawn" was not settled from the binary. With these
-//   at zero the mod reports "not aiming" every frame and the ADS cycle does nothing, which
-//   is the direction that fails toward stock behaviour. offControllerPawn is pinned now,
-//   so finishing the ADS pin is the three component offsets and nothing else.
+//   at zero the mod reports "not aiming" every frame and the lean is never eased out for
+//   the draw, which is the safe direction. offControllerPawn is pinned now, so finishing
+//   the ADS pin is the three component offsets and nothing else.
 //
 const BuildProfile kKnownProfiles[] = {
     kSteamProfile_20141007,

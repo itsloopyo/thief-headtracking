@@ -88,8 +88,7 @@ bool StartInput(const Config& cfg) {
         cfg,
         [] { Tracking().ToggleEnabled(); },
         [] { Tracking().CycleTrackingMode(); },
-        [] { Tracking().ToggleYawMode(); },
-        [] { Tracking().CycleAdsMode(); });
+        [] { Tracking().ToggleYawMode(); });
 }
 
 bool InstallHooks(const BuildProfile& profile, std::uintptr_t moduleBase, const Config& cfg) {
@@ -165,10 +164,9 @@ unsigned InitThreadBody() {
     }
     SetStructProbeEnabled(cfg.struct_probe);
     Log::Line("Config: port=%u enabled=%d smoothing=(local %.2f, remote %.2f) "
-              "sens=(%.2f,%.2f,%.2f) ads=%s",
+              "sens=(%.2f,%.2f,%.2f)",
               cfg.udp_port, cfg.enabled_on_startup ? 1 : 0, cfg.local_smoothing,
-              cfg.remote_smoothing, cfg.sens_yaw, cfg.sens_pitch, cfg.sens_roll,
-              cameraunlock::ads::AdsModeValue(cfg.ads_mode));
+              cfg.remote_smoothing, cfg.sens_yaw, cfg.sens_pitch, cfg.sens_roll);
 
     const BuildProfile* profile = MatchRunningProfile();
     if (!profile) {
@@ -183,7 +181,7 @@ unsigned InitThreadBody() {
     // declined to engage with this build gets to make.
     cameraunlock::diagnostics::InstallCrashHandler();
 
-    Tracking().Start(cfg, iniPath);
+    Tracking().Start(cfg);
 
     if (!StartInput(cfg)) {
         Log::Line("ERROR: Hotkeys start failed");

@@ -42,13 +42,12 @@ void LogGateChange(std::uint32_t bits, float fovDegrees) {
         return;
     }
     ++s_reports;
-    Log::Line("Gate 0x%02X%s%s%s%s%s%s fov=%.1f%s", bits,
+    Log::Line("Gate 0x%02X%s%s%s%s%s fov=%.1f%s", bits,
               (bits & kGateNoCamera)   ? " NOCAMERA" : "",
               (bits & kGateBadPov)     ? " BADPOV" : "",
               (bits & kGateTransition) ? " TRANSITION" : "",
               (bits & kGatePaused)     ? " PAUSED" : "",
               (bits & kGateNoPawn)     ? " NOPAWN" : "",
-              (bits & kGateAds)        ? " ADS" : "",
               fovDegrees,
               s_reports == kMaxGateReports ? " (further gate changes not logged)" : "");
 }

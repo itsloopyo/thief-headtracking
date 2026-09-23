@@ -121,9 +121,8 @@ struct BuildProfile {
     // word on that component and the bit that is set for as long as the bow is drawn.
     //
     // Zero in any of the four leaves ADS detection off, and the mod then reports "not
-    // aiming" on every frame. That is the direction that fails toward stock behaviour: the
-    // ADS cycle does nothing rather than suppressing tracking on a frame that is not an
-    // aim.
+    // aiming" on every frame. That is the safe direction: the lean stays in rather than
+    // being eased out on a frame that is not an aim.
     std::uint32_t offPawnMarksman;
     std::uint32_t offMarksmanAimBits;
     std::uint32_t maskMarksmanAim;

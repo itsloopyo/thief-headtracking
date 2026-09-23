@@ -149,14 +149,14 @@ void AMissingIniIsCreatedWithTheShippedDefaults() {
     // "LimitZ" is inside "LimitZBack" - so eight of these could be deleted from the writer
     // with the suite still green, which is the hole this test was written to close.
     static const char* const kExpectedKeys[] = {
-        "EnableOnStartup", "Port", "WorldSpaceYaw", "MoveCrosshair", "AdsMode",
+        "EnableOnStartup", "Port", "WorldSpaceYaw", "MoveCrosshair",
         "Yaw", "Pitch", "Roll", "InvertYaw", "InvertPitch", "InvertRoll",
         "LocalSmoothing", "RemoteSmoothing",
         "Enabled", "SensitivityX", "SensitivityY", "SensitivityZ",
         "LimitX", "LimitY", "LimitZ", "LimitZBack", "PositionScale",
         "Margin", "ReleaseSmoothing", "Channel",
         "Toggle", "CycleMode", "YawMode",
-        "ChordToggle", "ChordCycleMode", "ChordYawMode", "ChordAdsMode",
+        "ChordToggle", "ChordCycleMode", "ChordYawMode",
         "StructProbe",
     };
     for (const char* key : kExpectedKeys) {
@@ -190,7 +190,6 @@ void AMissingIniIsCreatedWithTheShippedDefaults() {
     Check(cfg.enabled_on_startup == kDefaultEnableOnStartup, "and EnableOnStartup");
     Check(cfg.world_space_yaw == kDefaultWorldSpaceYaw, "and WorldSpaceYaw");
     Check(cfg.move_crosshair == kDefaultMoveCrosshair, "and MoveCrosshair");
-    Check(cfg.ads_mode == kDefaultAdsMode, "and the ADS mode");
     Check(cfg.collision_enabled == kDefaultCollision, "and the collision switch");
     Check(cfg.struct_probe == kDefaultStructProbe, "and the struct probe switch");
     CheckNear(cfg.local_smoothing, kDefaultLocalSmoothing, "and LocalSmoothing");
@@ -216,7 +215,6 @@ void ABadValueLandsOnTheDefaultRatherThanReachingTheCamera() {
     WriteIni(path,
              "[General]\r\n"
              "Port=4242\r\n"
-             "AdsMode=marker\r\n"
              "[Sensitivity]\r\n"
              "Yaw=nan\r\n"
              "Pitch=2.5\r\n"
@@ -255,9 +253,6 @@ void ABadValueLandsOnTheDefaultRatherThanReachingTheCamera() {
           "a negative trace channel falls back to the pinned flags");
     Check(cfg.vk_toggle == kDefaultVkToggle,
           "an unusable virtual-key code lands on the documented default");
-    // Thief is a two-slot mod, so a three-slot sibling's config cannot select a mode this
-    // build does not have.
-    Check(cfg.ads_mode == kDefaultAdsMode, "marker is not a mode this mod has");
 
     DeleteFileA(path.c_str());
 }
@@ -282,22 +277,37 @@ void ThePortIsTheOneErrorThatRefusesToStart() {
     Check(!noPath.LoadOrCreate(nullptr), "and so does a null path");
 }
 
-void TheAdsModeSurvivesARestart() {
-    const std::string path = TempIniPath("thief_ht_ads.ini");
+// The retired ADS cycle left an AdsMode key in [General] and an AdsMode / ChordAdsMode
+// pair in [Hotkeys]. An INI written by that release has to load exactly as if the keys were
+// not there, and the file this build writes must not offer them back.
+void AnOldAdsModeConfigLoadsCleanly() {
+    const std::string path = TempIniPath("thief_ht_old_ads.ini");
     if (path.empty()) return;
+    WriteIni(path,
+             "[General]\r\n"
+             "Port=5000\r\n"
+             "AdsMode=tracked\r\n"
+             "[Hotkeys]\r\n"
+             "Toggle=0x7B\r\n"
+             "AdsMode=0x2D\r\n"
+             "ChordAdsMode=1\r\n");
+
+    Config cfg;
+    Check(cfg.LoadOrCreate(path.c_str()), "an INI carrying the retired ADS keys still loads");
+    Check(cfg.udp_port == 5000, "and the settings beside them are read as usual");
+    Check(cfg.vk_toggle == 0x7B, "including the hotkeys in the same section");
     DeleteFileA(path.c_str());
 
-    Config written;
-    Check(written.LoadOrCreate(path.c_str()), "the ADS test starts from a created INI");
-    Check(SaveAdsMode(path.c_str(), AdsMode::Tracked), "the cycled mode is written back");
-
-    Config reloaded;
-    Check(reloaded.LoadOrCreate(path.c_str()), "and the file still loads afterwards");
-    Check(reloaded.ads_mode == AdsMode::Tracked, "and the choice survived the restart");
-
-    Check(!SaveAdsMode("", AdsMode::Paused),
-          "an unresolvable path reports the write failure");
-    DeleteFileA(path.c_str());
+    const std::string fresh = TempIniPath("thief_ht_no_ads.ini");
+    if (fresh.empty()) return;
+    DeleteFileA(fresh.c_str());
+    Config created;
+    Check(created.LoadOrCreate(fresh.c_str()), "a fresh INI is created");
+    const std::string text = ReadWholeFile(fresh);
+    Check(text.find("AdsMode") == std::string::npos, "and it carries no ADS mode key");
+    Check(text.find("Insert") == std::string::npos, "nor names Insert as a hotkey");
+    Check(text.find("Ctrl+Shift+U") == std::string::npos, "nor Ctrl+Shift+U");
+    DeleteFileA(fresh.c_str());
 }
 
 // ---------------------------------------------------------------------------
@@ -911,7 +921,7 @@ int main() {
     AMissingIniIsCreatedWithTheShippedDefaults();
     ABadValueLandsOnTheDefaultRatherThanReachingTheCamera();
     ThePortIsTheOneErrorThatRefusesToStart();
-    TheAdsModeSurvivesARestart();
+    AnOldAdsModeConfigLoadsCleanly();
 
     AnUnreadablePageIsRejectedEvenWhenItIsCommitted();
 

@@ -45,12 +45,6 @@ void WriteGeneralSection(cameraunlock::IniWriter& w) {
     w.WriteComment("Projects the game's aim point into the head-tracked view.");
     w.WriteComment("The reticle leaves the screen when the aim point is outside the view.");
     w.WriteBool("MoveCrosshair", kDefaultMoveCrosshair);
-    w.WriteComment("What head tracking does while the bow is drawn:");
-    w.WriteComment("  paused  - the game keeps the camera until you lower the bow (default)");
-    w.WriteComment("  tracked - head tracking carries on, and the game's own crosshair keeps");
-    w.WriteComment("            marking the aim point");
-    w.WriteComment("Cycled in game with Insert or Ctrl+Shift+U, which writes the choice back here.");
-    w.WriteString("AdsMode", cameraunlock::ads::AdsModeValue(kDefaultAdsMode));
 }
 
 void WriteSensitivitySection(cameraunlock::IniWriter& w) {
@@ -112,16 +106,14 @@ void WriteDiagnosticsSection(cameraunlock::IniWriter& w) {
 
 void WriteHotkeysSection(cameraunlock::IniWriter& w) {
     w.WriteSection("Hotkeys");
-    w.WriteComment("Virtual-key codes. Defaults: End (toggle), Page Up (cycle tracking mode), Page Down (yaw mode), Insert (cycle ADS mode).");
+    w.WriteComment("Virtual-key codes. Defaults: End (toggle), Page Up (cycle tracking mode), Page Down (yaw mode).");
     w.WriteHex("Toggle", kDefaultVkToggle);
     w.WriteHex("CycleMode", kDefaultVkCycleMode);
     w.WriteHex("YawMode", kDefaultVkYawMode);
-    w.WriteHex("AdsMode", kDefaultVkAdsMode);
-    w.WriteComment("Chord alternatives: Ctrl+Shift+Y (toggle), Ctrl+Shift+G (cycle tracking mode), Ctrl+Shift+H (yaw mode), Ctrl+Shift+U (cycle ADS mode).");
+    w.WriteComment("Chord alternatives: Ctrl+Shift+Y (toggle), Ctrl+Shift+G (cycle tracking mode), Ctrl+Shift+H (yaw mode).");
     w.WriteBool("ChordToggle", kDefaultChord);
     w.WriteBool("ChordCycleMode", kDefaultChord);
     w.WriteBool("ChordYawMode", kDefaultChord);
-    w.WriteBool("ChordAdsMode", kDefaultChord);
 }
 
 // Returns false when the file could not be created, so the caller can say WHY the
@@ -331,38 +323,6 @@ std::uint32_t ReadTraceFlags(const cameraunlock::IniReader& ini, std::uint32_t f
     return value != 0 ? static_cast<std::uint32_t>(value) : fallback;
 }
 
-// The INI holds the ADS mode as a string, so an unknown one has to land on the default
-// rather than on whichever branch happens to be last. That covers a typo in a hand-edited
-// file, and it is also the migration path for a mode renamed since an older release wrote
-// the key: the player gets stock ADS rather than head tracking through their sights that
-// they never asked for. `marker` is one of those - it is a three-slot mod's mode and this
-// mod has no such slot, so it lands on the default too.
-//
-// Reported rather than silently corrected, because the file goes on advertising a mode the
-// mod is not honouring.
-AdsMode ReadAdsMode(const cameraunlock::IniReader& ini) {
-    const std::string raw = ini.ReadString("General", "AdsMode", "");
-    if (raw.empty()) {
-        return kDefaultAdsMode;
-    }
-    const AdsMode mode = ParseAdsMode(raw.c_str());
-    // ParseAdsMode trims and lowercases before matching, so comparing the trimmed input
-    // against the value it resolved to is what tells a recognised spelling from a fallback.
-    std::string trimmed = raw;
-    const char* kSpace = " \t\r\n\v\f";
-    const std::size_t first = trimmed.find_first_not_of(kSpace);
-    if (first == std::string::npos) {
-        return kDefaultAdsMode;
-    }
-    trimmed = trimmed.substr(first, trimmed.find_last_not_of(kSpace) - first + 1);
-    if (_stricmp(trimmed.c_str(), cameraunlock::ads::AdsModeValue(mode)) != 0) {
-        Log::Line("WARN: INI [General] AdsMode value '%s' is not one this mod has; using "
-                  "'%s'. The two it takes are 'paused' and 'tracked'.",
-                  trimmed.c_str(), cameraunlock::ads::AdsModeValue(mode));
-    }
-    return mode;
-}
-
 // Returns false on a port outside the bindable range, which is the one config error
 // the mod refuses to start on: every other bad value has a usable fallback.
 bool ReadGeneralSection(Config& cfg, const cameraunlock::IniReader& ini) {
@@ -398,7 +358,6 @@ bool ReadGeneralSection(Config& cfg, const cameraunlock::IniReader& ini) {
         ReadBoolChecked(ini, "General", "WorldSpaceYaw", kDefaultWorldSpaceYaw);
     cfg.move_crosshair =
         ReadBoolChecked(ini, "General", "MoveCrosshair", kDefaultMoveCrosshair);
-    cfg.ads_mode = ReadAdsMode(ini);
     return true;
 }
 
@@ -505,11 +464,9 @@ void ReadHotkeysSection(Config& cfg, const cameraunlock::IniReader& ini) {
     cfg.vk_toggle     = ReadVirtualKey(ini, "Toggle",    kDefaultVkToggle);
     cfg.vk_cycle_mode = ReadVirtualKey(ini, "CycleMode", kDefaultVkCycleMode);
     cfg.vk_yaw_mode   = ReadVirtualKey(ini, "YawMode",   kDefaultVkYawMode);
-    cfg.vk_ads_mode   = ReadVirtualKey(ini, "AdsMode",   kDefaultVkAdsMode);
     cfg.chord_toggle     = ReadBoolChecked(ini, "Hotkeys", "ChordToggle",    kDefaultChord);
     cfg.chord_cycle_mode = ReadBoolChecked(ini, "Hotkeys", "ChordCycleMode", kDefaultChord);
     cfg.chord_yaw_mode   = ReadBoolChecked(ini, "Hotkeys", "ChordYawMode",   kDefaultChord);
-    cfg.chord_ads_mode   = ReadBoolChecked(ini, "Hotkeys", "ChordAdsMode",   kDefaultChord);
 }
 
 }  // namespace
@@ -542,16 +499,6 @@ bool Config::LoadOrCreate(const char* iniPath) {
     ReadHotkeysSection(*this, ini);
     ReadDiagnosticsSection(*this, ini);
     return true;
-}
-
-// WritePrivateProfileString rather than a rewrite of the file: the INI carries the comments
-// the player reads settings by, and only this one key is ours to change.
-bool SaveAdsMode(const char* iniPath, AdsMode mode) {
-    if (!iniPath || !*iniPath) {
-        return false;
-    }
-    return WritePrivateProfileStringA("General", "AdsMode",
-                                      cameraunlock::ads::AdsModeValue(mode), iniPath) != FALSE;
 }
 
 }  // namespace ThiefHeadTracking

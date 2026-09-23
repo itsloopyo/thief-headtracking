@@ -94,15 +94,18 @@ Two equivalent binding sets - use whichever your keyboard has:
 | Toggle tracking     | `End`       | `Ctrl+Shift+Y`  |
 | Cycle tracking mode | `Page Up`   | `Ctrl+Shift+G`  |
 | Toggle yaw mode     | `Page Down` | `Ctrl+Shift+H`  |
-| Cycle ADS mode      | `Insert`    | `Ctrl+Shift+U`  |
 
 `Page Up` / `Ctrl+Shift+G` cycles tracking mode: full tracking, then rotation only, then position only, then back to full.
 
 `Page Down` / `Ctrl+Shift+H` switches head yaw between horizon-locked and camera-local. Horizon-locked is the default and keeps "up" where it is however the mouse is pitched.
 
-`Insert` / `Ctrl+Shift+U` cycles what head tracking does while the bow is drawn, between `paused` (the game keeps the camera until you lower the bow) and `tracked` (head tracking carries on, and Thief's own crosshair keeps marking the aim point). The choice is written back to the INI, so it survives a restart. On the current build the cycle changes the setting but nothing else, because the mod cannot yet see the bow being drawn.
-
 The mod draws no text of its own, so a mode you switch to is named in `HeadTracking.log` rather than on screen.
+
+### Aiming the bow
+
+Head tracking stays on while you draw the bow. The bow stays where your mouse or controller points it, so with your head turned it sits off to one side with its aim still lined up, and your arrows land where it points. Head movement is scaled to the zoom, so the draw does not magnify it.
+
+Leaning eases out while the bow is drawn, because it would move your eye off the arrow's line. On the current build the mod cannot yet see the bow being drawn, so the lean stays in.
 
 ## Configuration
 
@@ -120,12 +123,6 @@ WorldSpaceYaw=1
 ; Projects the game's aim point into the head-tracked view.
 ; The reticle leaves the screen when the aim point is outside the view.
 MoveCrosshair=1
-; What head tracking does while the bow is drawn:
-;   paused  - the game keeps the camera until you lower the bow (default)
-;   tracked - head tracking carries on, and the game's own crosshair keeps
-;             marking the aim point
-; Cycled in game with Insert or Ctrl+Shift+U, which writes the choice back here.
-AdsMode=paused
 
 [Sensitivity]
 Yaw=1
@@ -168,16 +165,14 @@ ReleaseSmoothing=0.9
 Channel=0x00
 
 [Hotkeys]
-; Virtual-key codes. Defaults: End (toggle), Page Up (cycle tracking mode), Page Down (yaw mode), Insert (cycle ADS mode).
+; Virtual-key codes. Defaults: End (toggle), Page Up (cycle tracking mode), Page Down (yaw mode).
 Toggle=0x23
 CycleMode=0x21
 YawMode=0x22
-AdsMode=0x2D
-; Chord alternatives: Ctrl+Shift+Y (toggle), Ctrl+Shift+G (cycle tracking mode), Ctrl+Shift+H (yaw mode), Ctrl+Shift+U (cycle ADS mode).
+; Chord alternatives: Ctrl+Shift+Y (toggle), Ctrl+Shift+G (cycle tracking mode), Ctrl+Shift+H (yaw mode).
 ChordToggle=1
 ChordCycleMode=1
 ChordYawMode=1
-ChordAdsMode=1
 
 [Diagnostics]
 ; Dumps the game structures this mod reads into HeadTracking.log, once each.
@@ -217,6 +212,10 @@ Thief has its own field of view slider in the graphics options, so the mod adds 
 **The crosshair drifts off where the arrow lands:**
 
 - Check that `[General] MoveCrosshair=1`. The mod projects the clean aim point into the tracked view, including positional lean. If the target leaves the view, the reticle leaves it too.
+
+**The bow is off to one side when I draw it:**
+
+- Your head is turned: the bow stays on your aim and you are looking past it. Turn back to it, or move your aim to where you are looking.
 
 **Leaning into a wall shows you what is behind it:**
 

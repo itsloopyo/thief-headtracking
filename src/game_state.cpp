@@ -124,18 +124,16 @@ const std::uint8_t* WorldInfo() {
 // POLLED, never latched. Thief drives the marksman state from an animation state machine
 // that can transition without an event reaching us - firing and re-drawing inside one
 // state, a takedown interrupting the draw - and a latched flag that missed one edge would
-// either strand the player in ADS behaviour or leak hip-fire tracking into the aim.
+// leave the lean eased out through the hip, or in through the draw.
 //
-// Every failure answers "not aiming". An unreadable frame that answered "still aiming"
-// would suspend tracking on a frame that is not an aim, with nothing on screen to explain
-// it; failing toward stock is the safe direction, and each hop is validated because a level
-// load rebuilds the objects behind these pointers while the render path is still reading
-// them.
+// Every failure answers "not aiming", so an unreadable frame leaves the lean in, which is
+// the safe direction. Each hop is validated because a level load rebuilds the objects
+// behind these pointers while the render path is still reading them.
 bool ReadMarksmanAiming(const std::uint8_t* controller) {
     // All FOUR, because the walk uses all four and they are pinned by separate steps of the
     // same hunt. With offControllerPawn left at 0 the first hop reads the controller's own
     // vtable pointer as the Pawn and the walk carries on through read-only data, answering
-    // from a constant - which in `paused` suspends tracking for the whole session while the
+    // from a constant - which would hold the lean out for the whole session while the
     // startup line says ads=on. Every hop below is Readable-checked, so nothing faults; it
     // just reports a fixed answer, which is worse.
     if (g_maskMarksmanAim == 0 || g_offPawnMarksman == 0 || g_offControllerPawn == 0 ||
@@ -169,9 +167,9 @@ void InitGameState(const BuildProfile& profile, std::uintptr_t moduleBase) {
     g_offMarksmanAimBits = profile.offMarksmanAimBits;
     g_maskMarksmanAim = profile.maskMarksmanAim;
 
-    // ads=OFF is not cosmetic: it means the mod cannot see the bow being drawn, so the ADS
-    // mode does nothing whichever way it is set. A player reporting that head tracking
-    // carries on through the bow has their answer on this line.
+    // ads=OFF is not cosmetic: it means the mod cannot see the bow being drawn, so the lean
+    // is not eased out while it is. A player reporting that a lean carries on through the
+    // bow has their answer on this line.
     // Each column is the SAME expression its gate branches on. Derived separately they
     // drift, and a column that reads "on" for a gate that is standing down is worse than no
     // column at all - it is the one line a triage session trusts.

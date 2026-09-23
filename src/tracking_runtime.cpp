@@ -91,9 +91,8 @@ void TrackingRuntime::ConfigureSmoothing() {
     m_session.SetRemoteSmoothing(m_cfg.remote_smoothing);
 }
 
-void TrackingRuntime::Start(const Config& cfg, const std::string& iniPath) {
+void TrackingRuntime::Start(const Config& cfg) {
     m_cfg = cfg;
-    m_iniPath = iniPath;
 
     ConfigureRotation();
     ConfigurePosition();
@@ -101,9 +100,6 @@ void TrackingRuntime::Start(const Config& cfg, const std::string& iniPath) {
 
     m_enabled.store(m_cfg.enabled_on_startup, std::memory_order_relaxed);
     m_worldSpaceYaw.store(m_cfg.world_space_yaw, std::memory_order_relaxed);
-    // Straight from the INI, and never reset from here on. The ADS mode is the player's
-    // choice; start-up logic that quietly puts it back to the default is a bug.
-    m_adsMode.store(m_cfg.ads_mode, std::memory_order_relaxed);
     m_session.SetMode(m_cfg.position_enabled
                           ? cameraunlock::TrackingMode::RotationAndPosition
                           : cameraunlock::TrackingMode::RotationOnly);
@@ -140,28 +136,6 @@ void TrackingRuntime::CycleTrackingMode() {
         case cameraunlock::TrackingMode::PositionOnly:
             Log::Line("Tracking mode: position only");
             break;
-    }
-}
-
-// Advances the two-slot cycle, writes it back to the INI, and names the mode it switched
-// to.
-//
-// The verdict does not have to be re-run from here: the camera hook reads GetAdsMode()
-// fresh on every scene view, so a press mid-aim changes what that same aim does on the next
-// rendered frame rather than on the next aim.
-//
-// The toast strings are core's, and they are the cross-mod contract rather than the
-// delivery mechanism. This mod draws no on-screen text - its only overlay is the game's own
-// reticle, moved - so the string goes to the log and the README says that is where the mode
-// is named.
-void TrackingRuntime::CycleAdsMode() {
-    const AdsMode next = AdvanceAdsMode(m_adsMode.load(std::memory_order_relaxed));
-    m_adsMode.store(next, std::memory_order_relaxed);
-
-    Log::Line("%s", cameraunlock::ads::AdsModeToast(next));
-    if (!SaveAdsMode(m_iniPath.c_str(), next)) {
-        Log::Line("WARN: could not write AdsMode back to the INI, so this choice will not "
-                  "survive a restart. The game directory is not writable by this account.");
     }
 }
 

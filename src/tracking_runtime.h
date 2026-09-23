@@ -10,7 +10,6 @@
 #include "cameraunlock/tracking/head_tracking_session.h"
 
 #include <atomic>
-#include <string>
 
 namespace ThiefHeadTracking {
 
@@ -35,9 +34,7 @@ public:
     // Applies @p cfg and brings the UDP receiver up. A port that will not bind yet is
     // not a failure: the receiver retries in the background, so there is no start
     // outcome for a caller to branch on.
-    //
-    // @p iniPath is where CycleAdsMode writes the player's ADS choice back to.
-    void Start(const Config& cfg, const std::string& iniPath);
+    void Start(const Config& cfg);
     void Stop();
 
     // Runs the per-frame pipeline once and returns the processed pose.
@@ -53,14 +50,8 @@ public:
     void ToggleEnabled();
     void CycleTrackingMode();
     void ToggleYawMode();
-    void CycleAdsMode();
 
     bool IsWorldSpaceYaw() const { return m_worldSpaceYaw.load(std::memory_order_relaxed); }
-
-    // Read fresh by the camera hook on every frame rather than cached, which is what makes
-    // a mid-aim change take effect on that aim: the verdict is walked again the next time
-    // the scene view asks for the viewpoint, a frame later.
-    AdsMode GetAdsMode() const { return m_adsMode.load(std::memory_order_relaxed); }
 
 private:
     static constexpr float kMaxFrameDtSec = 0.25f;
@@ -76,8 +67,6 @@ private:
 
     std::atomic<bool> m_enabled{false};
     std::atomic<bool> m_worldSpaceYaw{true};
-    std::atomic<AdsMode> m_adsMode{kDefaultAdsMode};
-    std::string m_iniPath;
 };
 
 }  // namespace ThiefHeadTracking

@@ -17,7 +17,6 @@ enum GateBit : std::uint32_t {
     kGateBadPov    = 1u << 1,  // the viewpoint or its field of view did not read sanely
     kGateTransition = 1u << 2, // the engine is loading, saving or paused
     kGatePaused    = 1u << 3,  // the world has a pauser: pause menu, inventory, map
-    kGateAds       = 1u << 5,  // the bow is drawn and AdsMode is `paused`
     kGateNoPawn    = 1u << 6,  // the controller possesses nothing: front end menu, loading
 };
 
@@ -33,9 +32,8 @@ void InitGameState(const BuildProfile& profile, std::uintptr_t moduleBase);
 // log to say why, which is a far worse failure than tracking briefly running in a menu.
 //
 // @p outAiming reports whether the bow is drawn. It is set on every path, including the
-// ones that return early, so nothing downstream can read a stale flag. kGateAds is NOT
-// among the bits returned here: whether the sights close the gate depends on the ADS mode
-// and on the transition, neither of which is game state - see ApplyAdsToGate in ads.h.
+// ones that return early, so nothing downstream can read a stale flag. It never closes the
+// gate: the camera hook only uses it to ease the lean out while the bow is drawn.
 std::uint32_t ReadGameStateGate(const std::uint8_t* controller, bool* outAiming);
 
 }  // namespace ThiefHeadTracking

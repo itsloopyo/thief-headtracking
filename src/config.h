@@ -3,8 +3,6 @@
 
 #pragma once
 
-#include "ads.h"
-
 #include "cameraunlock/camera/lean_clamp.h"
 #include "cameraunlock/data/position_settings.h"
 #include "cameraunlock/math/smoothing_utils.h"
@@ -69,15 +67,9 @@ constexpr float kDefaultCollisionRelease =
 // after a patch moves them, and it is off because the dump is hundreds of lines long.
 constexpr bool  kDefaultStructProbe     = false;
 
-// The mode that cannot be wrong: raising the bow takes the head pose off the camera, which
-// by itself swings the view onto the point the crosshair was marking, and from there the
-// game owns the sight picture exactly as it does unmodded.
-constexpr AdsMode kDefaultAdsMode       = cameraunlock::ads::kDefaultAdsMode;
-
 constexpr int   kDefaultVkToggle        = 0x23; // VK_END
 constexpr int   kDefaultVkCycleMode     = 0x21; // VK_PRIOR (Page Up)
 constexpr int   kDefaultVkYawMode       = 0x22; // VK_NEXT (Page Down)
-constexpr int   kDefaultVkAdsMode       = 0x2D; // VK_INSERT
 constexpr bool  kDefaultChord           = true;
 
 struct Config {
@@ -110,10 +102,6 @@ struct Config {
     // true = horizon-locked (world-space) yaw, false = camera-local.
     bool world_space_yaw = kDefaultWorldSpaceYaw;
 
-    // What head tracking does while the bow is drawn. Two slots, `paused` and `tracked`;
-    // see ads.h for why there is no third.
-    AdsMode ads_mode = kDefaultAdsMode;
-
     // 6DOF positional tracking.
     bool  position_enabled = kDefaultPositionEnabled;
     float pos_sens_x = kDefaultPosSens;
@@ -137,22 +125,11 @@ struct Config {
     int vk_toggle     = kDefaultVkToggle;
     int vk_cycle_mode = kDefaultVkCycleMode;
     int vk_yaw_mode   = kDefaultVkYawMode;
-    int vk_ads_mode   = kDefaultVkAdsMode;
     bool chord_toggle = kDefaultChord;
     bool chord_cycle_mode = kDefaultChord;
     bool chord_yaw_mode = kDefaultChord;
-    bool chord_ads_mode = kDefaultChord;
 
     bool LoadOrCreate(const char* iniPath);
 };
-
-// Writes the ADS mode back to @p iniPath, leaving every other key and comment in the file
-// where it was. The mode is the player's choice, so it has to survive a restart; nothing in
-// start-up resets it.
-//
-// Returns false when the file could not be written, which the caller reports rather than
-// swallowing: a setting that silently forgets itself between sessions reads as the key not
-// working at all.
-bool SaveAdsMode(const char* iniPath, AdsMode mode);
 
 }  // namespace ThiefHeadTracking
