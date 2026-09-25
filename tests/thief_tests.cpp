@@ -12,7 +12,7 @@
 
 #include "aim_projection.h"
 #include "config.h"
-#include "config_sanitize.h"
+#include "legacy_config/config_sanitize.h"
 #include "build_profile.h"
 #include "hud_basis.h"
 #include "lean_geometry.h"
@@ -52,12 +52,15 @@ void CheckNear(float actual, float expected, const char* what, float tolerance =
 }
 
 using namespace ThiefHeadTracking;
+using legacy::SanitizeFinite;
+using legacy::SanitizePositiveLimit;
+using legacy::SanitizeSmoothing;
 
 const float kNan = std::nanf("");
 const float kInf = HUGE_VALF;
 
 // ---------------------------------------------------------------------------
-// config_sanitize.h - the boundary validation every INI float passes through.
+// legacy_config/config_sanitize.h - the boundary validation every INI float passes through.
 // ---------------------------------------------------------------------------
 
 void SanitizersRejectOnlyWhatTheyMust() {

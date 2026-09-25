@@ -25,7 +25,8 @@ build = { cmd = "cmake --build build --config Debug", depends-on = ["setup"] }
 # Build release configuration.
 build-release = { cmd = "cmake --build build --config Release", depends-on = ["setup"] }
 
-# Build and run the native unit tests (pure INI, rotator, projection and clamp logic).
+# Build and run the native unit tests: the frozen config reader, the rotator, projection
+# and clamp logic, and the config differential test against the published build.
 test = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/run-tests.ps1" }
 
 # Build + deploy release to the game directory.
@@ -35,7 +36,7 @@ install = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/deploy.ps1 R
 uninstall = "scripts/uninstall.cmd /y"
 
 # Package the installer ZIP.
-package = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1", depends-on = ["build-release"] }
+package = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1", depends-on = ["build-release", "test"] }
 
 # Clean build artifacts. No $vars in inline commands - pixi's shell eats them before PowerShell runs.
 clean = { cmd = """

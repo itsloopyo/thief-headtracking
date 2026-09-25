@@ -22,6 +22,7 @@ add_subdirectory(cameraunlock-core/cpp ${CMAKE_BINARY_DIR}/cameraunlock-core)
 set(MOD_SOURCES
     src/dllmain.cpp
     src/config.cpp
+    src/legacy_config/legacy_config.cpp
     src/path_utils.cpp
     src/hotkeys.cpp
     src/tracking_runtime.cpp
@@ -105,7 +106,7 @@ if(THIEF_BUILD_TESTS)
     # Config::LoadOrCreate and asserts what comes out. The rest of what this suite covers
     # - the UE3 rotator maths, the aim projection, the zoom factor and the lean trace
     # geometry - is header-only and needs no game.
-    thief_add_test(thief_tests src/config.cpp src/build_profile.cpp)
+    thief_add_test(thief_tests src/config.cpp src/legacy_config/legacy_config.cpp src/build_profile.cpp)
 
     # The lean easing while the bow is drawn. src/ads.h is header-only, so it needs no game
     # or build profile.
@@ -114,4 +115,56 @@ if(THIEF_BUILD_TESTS)
     thief_add_test(hud_accessor_tests)
     thief_add_test(game_state_tests src/game_state.cpp src/camera_diagnostics.cpp
                    src/aim_marker.cpp src/struct_probe.cpp)
+
+    # The config differential test. The oracle is the newest published build's reader and
+    # hotkey registration with the core sources they compiled, copied verbatim into
+    # tests/config_differential/oracle. It is two libraries because the reader calls the
+    # published poller's IsValidHotkeyCode while Hotkeys::Start has to run on oracle_fake's
+    # recording poller; each renames the two namespaces its own way, so neither collides
+    # with the other or with the current core.
+    set(THIEF_ORACLE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/tests/config_differential/oracle)
+    add_library(thief_config_oracle STATIC
+        ${THIEF_ORACLE_DIR}/src/config.cpp
+        ${THIEF_ORACLE_DIR}/core/src/config/ini_reader.cpp
+        ${THIEF_ORACLE_DIR}/core/src/input/hotkey_poller.cpp
+        ${THIEF_ORACLE_DIR}/core/src/logging/file_log.cpp
+        tests/config_differential/oracle_config_adapter.cpp
+    )
+    target_include_directories(thief_config_oracle PRIVATE
+        ${THIEF_ORACLE_DIR}/src
+        ${THIEF_ORACLE_DIR}/core/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/config_differential)
+    target_compile_definitions(thief_config_oracle PRIVATE
+        cameraunlock=thief_oracle_core
+        ThiefHeadTracking=thief_oracle)
+
+    add_library(thief_hotkeys_oracle STATIC
+        ${THIEF_ORACLE_DIR}/src/hotkeys.cpp
+        ${THIEF_ORACLE_DIR}/core/src/logging/file_log.cpp
+        tests/config_differential/oracle_hotkeys_adapter.cpp
+    )
+    target_include_directories(thief_hotkeys_oracle PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/config_differential/oracle_fake
+        ${THIEF_ORACLE_DIR}/src
+        ${THIEF_ORACLE_DIR}/core/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/config_differential)
+    target_compile_definitions(thief_hotkeys_oracle PRIVATE
+        cameraunlock=thief_oracle_hk_core
+        ThiefHeadTracking=thief_oracle_hk)
+
+    add_executable(config_differential_tests
+        tests/config_differential/differential_tests.cpp
+        src/legacy_config/legacy_config.cpp
+    )
+    target_include_directories(config_differential_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/config_differential)
+    target_compile_definitions(config_differential_tests PRIVATE
+        THIEF_DIFFERENTIAL_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/config_differential/data")
+    target_link_libraries(config_differential_tests PRIVATE
+        cameraunlock thief_config_oracle thief_hotkeys_oracle)
+    if(MSVC)
+        target_compile_options(config_differential_tests PRIVATE /W4 /WX /permissive-)
+    endif()
+    add_test(NAME config_differential_tests COMMAND config_differential_tests)
 endif()
