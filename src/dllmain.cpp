@@ -15,12 +15,15 @@
 #include "window_centering.h"
 #include "world_trace.h"
 
+#include "cameraunlock/config/config_owner.h"
 #include "cameraunlock/diagnostics/crash_handler.h"
 #include "cameraunlock/memory/pe_fingerprint.h"
+#include "cameraunlock/tracking/tracking_mode.h"
 
 #include <windows.h>
 #include <process.h>
 
+#include <cstdint>
 #include <exception>
 #include <string>
 
@@ -31,7 +34,6 @@ using namespace ThiefHeadTracking;
 constexpr const char* kModName    = "ThiefHeadTracking";
 constexpr const char* kModVersion = "0.0.0";
 constexpr const char* kLogFile    = "HeadTracking.log";
-constexpr const char* kIniFile    = "ThiefHeadTracking.ini";
 
 constexpr int kInitMaxWaitMs = 30000;
 constexpr int kInitPollMs    = 100;
@@ -58,6 +60,37 @@ TrackingRuntime& Tracking() {
 Hotkeys& Input() {
     static Hotkeys* instance = new Hotkeys();
     return *instance;
+}
+
+// The one reader and writer of CameraUnlock.ini, never destroyed for the same reason as the
+// two above. Built and loaded on the init thread before the hotkeys start, and saved through
+// from the hotkey thread afterwards.
+cameraunlock::config::ConfigOwner<Config>* g_configOwner = nullptr;
+
+// A save that did not happen has already reached the log through the status sink; the
+// session keeps the state the toggle applied. A save that did can carry a line too, naming a
+// row that stopped following Defaults.ini.
+void LogSave(const cameraunlock::config::ConfigSaveResult& saved) {
+    for (const std::string& line : saved.log) Log::Line("%s", line.c_str());
+    if (saved.status != cameraunlock::config::ConfigSaveStatus::Saved) {
+        Log::Line("WARN: the change applies for this session only.");
+    }
+}
+
+// Each toggle applies its new state first, then saves it. End is not here: it changes the
+// session only, and EnableOnStartup decides the next start.
+void CycleTrackingModeAndSave() {
+    const cameraunlock::TrackingModeChannels channels =
+        cameraunlock::EncodeTrackingMode(Tracking().CycleTrackingMode());
+    LogSave(g_configOwner->Save([channels](Config& c) {
+        c.rotation_enabled = channels.rotation_enabled;
+        c.position_enabled = channels.position_enabled;
+    }));
+}
+
+void ToggleYawModeAndSave() {
+    const bool worldSpace = Tracking().ToggleYawMode();
+    LogSave(g_configOwner->Save([worldSpace](Config& c) { c.world_space_yaw = worldSpace; }));
 }
 
 void LogFingerprint() {
@@ -87,19 +120,20 @@ bool StartInput(const Config& cfg) {
     return Input().Start(
         cfg,
         [] { Tracking().ToggleEnabled(); },
-        [] { Tracking().CycleTrackingMode(); },
-        [] { Tracking().ToggleYawMode(); });
+        [] { CycleTrackingModeAndSave(); },
+        [] { ToggleYawModeAndSave(); });
 }
 
 bool InstallHooks(const BuildProfile& profile, std::uintptr_t moduleBase, const Config& cfg) {
-    InitWorldTrace(profile, moduleBase, cfg.collision_channel);
+    // The config holds the trace flag word's bits in a signed field.
+    InitWorldTrace(profile, moduleBase, static_cast<std::uint32_t>(cfg.collision_channel));
     InitCameraCollision(cfg);
     InitGameState(profile, moduleBase);
 
-    const bool reticleAvailable = cfg.move_crosshair && profile.rvaGfxSetPosition != 0;
+    const bool reticleAvailable = profile.rvaGfxSetPosition != 0;
     if (reticleAvailable) InitCrosshair(profile, moduleBase);
 
-    if (!InstallCameraHook(profile, moduleBase, Tracking(), cfg, reticleAvailable)) {
+    if (!InstallCameraHook(profile, moduleBase, Tracking(), reticleAvailable)) {
         Log::Line("ERROR: Camera hook install failed");
         return false;
     }
@@ -156,17 +190,34 @@ unsigned InitThreadBody() {
     Log::Line("%s v%s attached to %s", kModName, kModVersion, kGameExeName);
     LogFingerprint();
 
-    const std::string iniPath = GetModulePath(kIniFile);
-    Config cfg;
-    if (!cfg.LoadOrCreate(iniPath.c_str())) {
+    // Only the 64-bit game process loads this mod: the 32-bit launcher in Binaries2Win32 has
+    // no ASI loader beside it, so one process opens this folder's config.
+    const std::wstring folder = GetModuleDirectoryW();
+    if (folder.empty()) {
+        Log::Line("ERROR: the folder this mod was loaded from could not be read, so there is "
+                  "nowhere to read the settings from. The mod will not start.");
+        return 1;
+    }
+    cameraunlock::config::ConfigOwnerOptions<Config> options =
+        MakeConfigOwnerOptions(folder, cameraunlock::config::DefaultsFile::PerUser());
+    // The log is the only place this mod can tell the player anything.
+    options.status_sink = [](const std::string& message) { Log::Line("WARN: %s", message.c_str()); };
+    g_configOwner = new cameraunlock::config::ConfigOwner<Config>(std::move(options));
+
+    const cameraunlock::config::ConfigLoadResult<Config> loaded = g_configOwner->Load();
+    for (const std::string& line : loaded.log) Log::Line("%s", line.c_str());
+    Log::Line("Config: %s", cameraunlock::config::ConfigLoadStatusName(loaded.status));
+    // The build ThiefHeadTracking.ini was written for refused it and did not start, so this
+    // one does the same until the player fixes it.
+    if (loaded.status == cameraunlock::config::ConfigLoadStatus::LegacyRefused) {
         Log::Line("ERROR: Config load failed");
         return 1;
     }
+    const Config& cfg = loaded.config;
     SetStructProbeEnabled(cfg.struct_probe);
-    Log::Line("Config: port=%u enabled=%d smoothing=(local %.2f, remote %.2f) "
-              "sens=(%.2f,%.2f,%.2f)",
-              cfg.udp_port, cfg.enabled_on_startup ? 1 : 0, cfg.local_smoothing,
-              cfg.remote_smoothing, cfg.sens_yaw, cfg.sens_pitch, cfg.sens_roll);
+    Log::Line("Config: port=%d enabled=%d smoothing=(local %.2f, remote %.2f)",
+              cfg.udp_port, cfg.enable_on_startup ? 1 : 0, cfg.local_smoothing,
+              cfg.remote_smoothing);
 
     const BuildProfile* profile = MatchRunningProfile();
     if (!profile) {
@@ -213,7 +264,7 @@ unsigned InitThreadBody() {
 // std::terminate - the game dying outright with the log stopping mid-startup - and there
 // are three places above that can throw: the UDP receiver and the hotkey poller each
 // construct a std::thread, which throws std::system_error when the process cannot spawn
-// one, and the config path allocates.
+// one, and the config owner allocates and refuses a table it cannot render.
 unsigned __stdcall InitThread(void*) {
     try {
         return InitThreadBody();

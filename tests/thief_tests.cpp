@@ -4,15 +4,16 @@
 // The pure logic the hooks inject through, exercised without a game.
 //
 // Six things are covered here, and each one is a place a wrong answer is invisible in
-// play: the INI sanitizers and the CALL SITES that use them, the guard every engine
+// play: the frozen legacy INI reader's sanitizers and the CALL SITES that use them, which
+// decide what an old file converts to, the guard every engine
 // memory read passes through, the UE3 rotator maths at the engine boundary, the reticle
 // projection, the zoom factor, and the lean trace's own geometry. Everything here is a
 // behaviour lock - the assertions record what the shipped code does, so a restructure
 // that changes an answer fails rather than ships.
 
 #include "aim_projection.h"
-#include "config.h"
 #include "legacy_config/config_sanitize.h"
+#include "legacy_config/legacy_config.h"
 #include "build_profile.h"
 #include "hud_basis.h"
 #include "lean_geometry.h"
@@ -91,7 +92,8 @@ void SanitizersRejectOnlyWhatTheyMust() {
 }
 
 // ---------------------------------------------------------------------------
-// Config::LoadOrCreate - the sanitizers were already covered, the call sites were not.
+// legacy::Config::Read - the frozen pre-canonical reader the legacy import converts old
+// files through. The sanitizers were already covered, the call sites were not.
 // ---------------------------------------------------------------------------
 
 std::string TempIniPath(const char* leaf) {
@@ -114,102 +116,26 @@ void WriteIni(const std::string& path, const char* body) {
     std::fclose(f);
 }
 
-// The text of an INI, or an empty string when it could not be read.
-std::string ReadWholeFile(const std::string& path) {
-    FILE* f = std::fopen(path.c_str(), "rb");
-    if (f == nullptr) return {};
-    std::string out;
-    char buffer[4096];
-    size_t got;
-    while ((got = std::fread(buffer, 1, sizeof(buffer), f)) > 0) {
-        out.append(buffer, got);
-    }
-    std::fclose(f);
-    return out;
-}
+const legacy::Config kShipped{};
 
-void AMissingIniIsCreatedWithTheShippedDefaults() {
-    const std::string path = TempIniPath("thief_ht_defaults.ini");
+void AMissingIniReadsAsTheShippedDefaults() {
+    const std::string path = TempIniPath("thief_ht_absent.ini");
     Check(!path.empty(), "a temp directory is available for the config tests");
     if (path.empty()) return;
     DeleteFileA(path.c_str());
 
-    Config cfg;
-    Check(cfg.LoadOrCreate(path.c_str()), "a missing INI is created rather than refused");
-    Check(GetFileAttributesA(path.c_str()) != INVALID_FILE_ATTRIBUTES,
-          "and the file it wrote is on disk");
-
-    // Against the FILE, not against the constants. Every member below is initialised from
-    // the same constant the reader falls back to, so comparing the two proves nothing: an
-    // INI writer emptied out entirely would satisfy all of it. The shipped INI is the mod's
-    // user-facing documentation, so what has to be checked is that the keys reached the
-    // disk.
-    const std::string text = ReadWholeFile(path);
-    Check(!text.empty(), "the created INI has content rather than being an empty file");
-    // Each key is looked for as a LINE that assigns it, not as a substring. A bare
-    // substring search passes on prose and on longer siblings - "Yaw" is in the WorldSpaceYaw
-    // comment, "Enabled" is in the Collision comment, "Toggle" is inside "ChordToggle" and
-    // "LimitZ" is inside "LimitZBack" - so eight of these could be deleted from the writer
-    // with the suite still green, which is the hole this test was written to close.
-    static const char* const kExpectedKeys[] = {
-        "EnableOnStartup", "Port", "WorldSpaceYaw", "MoveCrosshair",
-        "Yaw", "Pitch", "Roll", "InvertYaw", "InvertPitch", "InvertRoll",
-        "LocalSmoothing", "RemoteSmoothing",
-        "Enabled", "SensitivityX", "SensitivityY", "SensitivityZ",
-        "LimitX", "LimitY", "LimitZ", "LimitZBack", "PositionScale",
-        "Margin", "ReleaseSmoothing", "Channel",
-        "Toggle", "CycleMode", "YawMode",
-        "ChordToggle", "ChordCycleMode", "ChordYawMode",
-        "StructProbe",
-    };
-    for (const char* key : kExpectedKeys) {
-        if (text.find("\n" + std::string(key) + "=") == std::string::npos) {
-            Check(false, key);
-            std::printf("      (no line assigning this key in the INI the mod wrote)\n");
-        }
-    }
-    static const char* const kExpectedSections[] = {
-        "[General]", "[Sensitivity]", "[Smoothing]", "[Position]", "[Collision]",
-        "[Hotkeys]", "[Diagnostics]",
-    };
-    for (const char* section : kExpectedSections) {
-        if (text.find(section) == std::string::npos) {
-            Check(false, section);
-            std::printf("      (section missing from the INI the mod wrote)\n");
-        }
-    }
-    Check(text.find("\nPort=4242") != std::string::npos,
-          "and the port it wrote is the documented default");
-
-    // The retired positional inversion keys must NOT come back: they land ahead of the
-    // asymmetric z clamp, which moves the generous forward budget onto the backward lean.
-    // Matched as assignments too, so InvertY is distinguishable from InvertYaw.
-    Check(text.find("\nInvertX=") == std::string::npos,
-          "and the INI offers no positional axis inversion on x");
-    Check(text.find("\nInvertY=") == std::string::npos, "nor on y");
-    Check(text.find("\nInvertZ=") == std::string::npos, "nor on z");
-
-    Check(cfg.udp_port == kDefaultPort, "the created INI round-trips the default port");
-    Check(cfg.enabled_on_startup == kDefaultEnableOnStartup, "and EnableOnStartup");
-    Check(cfg.world_space_yaw == kDefaultWorldSpaceYaw, "and WorldSpaceYaw");
-    Check(cfg.move_crosshair == kDefaultMoveCrosshair, "and MoveCrosshair");
-    Check(cfg.collision_enabled == kDefaultCollision, "and the collision switch");
-    Check(cfg.struct_probe == kDefaultStructProbe, "and the struct probe switch");
-    CheckNear(cfg.local_smoothing, kDefaultLocalSmoothing, "and LocalSmoothing");
-    CheckNear(cfg.remote_smoothing, kDefaultRemoteSmoothing, "and RemoteSmoothing");
-    CheckNear(cfg.pos_limit_z, kDefaultPosLimitZ, "and the forward lean limit");
-    CheckNear(cfg.pos_limit_z_back, kDefaultPosLimitZBack, "and the backward one");
-    CheckNear(cfg.position_scale, kDefaultPositionScale,
-              "and the metres-to-centimetres scale", 1e-2f);
-    CheckNear(cfg.collision_margin, kDefaultCollisionMargin,
-              "and the collision margin", 1e-2f);
-
+    legacy::Config cfg;
+    Check(cfg.Read(path.c_str()).status == legacy::ReadStatus::Absent,
+          "a missing INI reads as absent rather than refused");
+    Check(GetFileAttributesA(path.c_str()) == INVALID_FILE_ATTRIBUTES,
+          "and the frozen reader does not create it");
+    Check(cfg.udp_port == 4242, "the default port");
+    CheckNear(cfg.position_scale, 100.0f, "and the metres-to-centimetres scale", 1e-2f);
+    CheckNear(cfg.collision_margin, 20.0f, "and the collision margin", 1e-2f);
     // The generous forward budget has to stay on leaning IN, which is what the asymmetry
     // is for.
     Check(cfg.pos_limit_z > cfg.pos_limit_z_back,
           "and the forward lean keeps the larger budget");
-
-    DeleteFileA(path.c_str());
 }
 
 void ABadValueLandsOnTheDefaultRatherThanReachingTheCamera() {
@@ -235,26 +161,27 @@ void ABadValueLandsOnTheDefaultRatherThanReachingTheCamera() {
              "[Hotkeys]\r\n"
              "Toggle=0x1234\r\n");
 
-    Config cfg;
-    Check(cfg.LoadOrCreate(path.c_str()), "a file full of bad values still loads");
-    CheckNear(cfg.sens_yaw, kDefaultSensitivity, "a NaN sensitivity lands on the default");
+    legacy::Config cfg;
+    Check(cfg.Read(path.c_str()).status == legacy::ReadStatus::Read,
+          "a file full of bad values still loads");
+    CheckNear(cfg.sens_yaw, kShipped.sens_yaw, "a NaN sensitivity lands on the default");
     CheckNear(cfg.sens_pitch, 2.5f, "while the good value beside it is kept");
     CheckNear(cfg.local_smoothing, 1.0f, "smoothing above the domain clamps to 1");
     CheckNear(cfg.remote_smoothing, 0.0f, "smoothing below it clamps to 0");
-    CheckNear(cfg.pos_limit_z, kDefaultPosLimitZ,
+    CheckNear(cfg.pos_limit_z, kShipped.pos_limit_z,
               "a negative limit lands on the default, keeping the clamp the right way round");
     CheckNear(cfg.pos_limit_x, 0.9f, "while a widened limit beside it is honoured");
-    CheckNear(cfg.position_scale, kDefaultPositionScale,
+    CheckNear(cfg.position_scale, kShipped.position_scale,
               "a non-finite scale lands on the default", 1e-2f);
-    CheckNear(cfg.collision_margin, kDefaultCollisionMargin,
+    CheckNear(cfg.collision_margin, kShipped.collision_margin,
               "a zero margin lands on the default", 1e-2f);
     CheckNear(cfg.collision_release_smoothing, 1.0f,
               "the release pacing clamps into [0,1]");
     // Zero means "use the flags this build pinned"; a negative value is a typo that took
     // the same branch, so it has to land on the pin rather than on a nonsense flag word.
-    Check(cfg.collision_channel == kDefaultCollisionChannel,
+    Check(cfg.collision_channel == kShipped.collision_channel,
           "a negative trace channel falls back to the pinned flags");
-    Check(cfg.vk_toggle == kDefaultVkToggle,
+    Check(cfg.vk_toggle == kShipped.vk_toggle,
           "an unusable virtual-key code lands on the documented default");
 
     DeleteFileA(path.c_str());
@@ -265,24 +192,21 @@ void ThePortIsTheOneErrorThatRefusesToStart() {
     if (path.empty()) return;
 
     WriteIni(path, "[General]\r\nPort=80\r\n");
-    Config below;
-    Check(!below.LoadOrCreate(path.c_str()),
+    legacy::Config below;
+    Check(below.Read(path.c_str()).status == legacy::ReadStatus::Refused,
           "a port below the bindable range refuses to load");
     DeleteFileA(path.c_str());
 
     WriteIni(path, "[General]\r\nPort=99999\r\n");
-    Config above;
-    Check(!above.LoadOrCreate(path.c_str()), "and so does one above it");
+    legacy::Config above;
+    Check(above.Read(path.c_str()).status == legacy::ReadStatus::Refused,
+          "and so does one above it");
     DeleteFileA(path.c_str());
-
-    Config noPath;
-    Check(!noPath.LoadOrCreate(""), "an unresolvable directory refuses to load");
-    Check(!noPath.LoadOrCreate(nullptr), "and so does a null path");
 }
 
 // The retired ADS cycle left an AdsMode key in [General] and an AdsMode / ChordAdsMode
 // pair in [Hotkeys]. An INI written by that release has to load exactly as if the keys were
-// not there, and the file this build writes must not offer them back.
+// not there.
 void AnOldAdsModeConfigLoadsCleanly() {
     const std::string path = TempIniPath("thief_ht_old_ads.ini");
     if (path.empty()) return;
@@ -295,22 +219,12 @@ void AnOldAdsModeConfigLoadsCleanly() {
              "AdsMode=0x2D\r\n"
              "ChordAdsMode=1\r\n");
 
-    Config cfg;
-    Check(cfg.LoadOrCreate(path.c_str()), "an INI carrying the retired ADS keys still loads");
+    legacy::Config cfg;
+    Check(cfg.Read(path.c_str()).status == legacy::ReadStatus::Read,
+          "an INI carrying the retired ADS keys still loads");
     Check(cfg.udp_port == 5000, "and the settings beside them are read as usual");
     Check(cfg.vk_toggle == 0x7B, "including the hotkeys in the same section");
     DeleteFileA(path.c_str());
-
-    const std::string fresh = TempIniPath("thief_ht_no_ads.ini");
-    if (fresh.empty()) return;
-    DeleteFileA(fresh.c_str());
-    Config created;
-    Check(created.LoadOrCreate(fresh.c_str()), "a fresh INI is created");
-    const std::string text = ReadWholeFile(fresh);
-    Check(text.find("AdsMode") == std::string::npos, "and it carries no ADS mode key");
-    Check(text.find("Insert") == std::string::npos, "nor names Insert as a hotkey");
-    Check(text.find("Ctrl+Shift+U") == std::string::npos, "nor Ctrl+Shift+U");
-    DeleteFileA(fresh.c_str());
 }
 
 // ---------------------------------------------------------------------------
@@ -500,21 +414,22 @@ void AnUnusableValueIsRefusedRatherThanQuietlyReplaced() {
              "[Hotkeys]\n"
              "Toggle=zzz\n");
 
-    Config cfg;
-    Check(cfg.LoadOrCreate(path.c_str()), "an INI full of bad values still loads");
+    legacy::Config cfg;
+    Check(cfg.Read(path.c_str()).status == legacy::ReadStatus::Read,
+          "an INI full of bad values still loads");
 
     // A trailing "; comment" is part of the value, so this bool is unusable rather than
     // false. Taking it as false would honour an edit the reader cannot actually parse.
-    Check(cfg.enabled_on_startup == kDefaultEnableOnStartup,
+    Check(cfg.enabled_on_startup == kShipped.enabled_on_startup,
           "a bool with a trailing comment falls back rather than being guessed at");
 
     // A negative position sensitivity is an axis inversion in disguise, and it lands ahead
     // of the asymmetric z clamp.
-    CheckNear(cfg.pos_sens_x, kDefaultPosSens,
+    CheckNear(cfg.pos_sens_x, kShipped.pos_sens_x,
               "a negative position sensitivity is refused");
     CheckNear(cfg.pos_sens_y, 2.0f, "while a legitimate one beside it is honoured");
 
-    CheckNear(cfg.collision_margin, kDefaultCollisionMargin,
+    CheckNear(cfg.collision_margin, kShipped.collision_margin,
               "a collision margin that is not a number is refused", 1e-2f);
 
     // The whole 32-bit word, not the half strtol can carry: saturating this to 0x7FFFFFFF
@@ -522,7 +437,7 @@ void AnUnusableValueIsRefusedRatherThanQuietlyReplaced() {
     Check(cfg.collision_channel == 0xFFFFFFFFu,
           "a trace channel above 0x7FFFFFFF survives intact");
 
-    Check(cfg.vk_toggle == kDefaultVkToggle,
+    Check(cfg.vk_toggle == kShipped.vk_toggle,
           "a hotkey that is not a hex number falls back to the documented default");
 
     DeleteFileA(path.c_str());
@@ -921,7 +836,7 @@ void TheInsetComesFromTheShorterSide() {
 
 int main() {
     SanitizersRejectOnlyWhatTheyMust();
-    AMissingIniIsCreatedWithTheShippedDefaults();
+    AMissingIniReadsAsTheShippedDefaults();
     ABadValueLandsOnTheDefaultRatherThanReachingTheCamera();
     ThePortIsTheOneErrorThatRefusesToStart();
     AnOldAdsModeConfigLoadsCleanly();

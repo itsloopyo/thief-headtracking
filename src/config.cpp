@@ -4,192 +4,161 @@
 #include "config.h"
 
 #include "legacy_config/legacy_config.h"
-#include "logging.h"
+#include "path_utils.h"
+#include "ue3_math.h"
 
-#include "cameraunlock/config/ini_reader.h"
+#include "cameraunlock/config/head_tracking_config_table.h"
+#include "cameraunlock/input/key_bindings.h"
+#include "cameraunlock/tracking/tracking_mode.h"
 
-#include <windows.h>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace ThiefHeadTracking {
 
 namespace {
 
-// The defaults WriteDefaultIni writes on first run live in config.h. The frozen reader in
-// legacy_config/ holds its own copy, as the build it was taken from did.
-//
-// Note what is NOT here: the protocol-to-engine sign conversions. Position X and Z are
-// mirrored relative to UE3 and both are converted at the engine boundary in
-// camera_hook.cpp rather than through an Invert default, because inverting inside the
-// pipeline flips the value BEFORE the asymmetric clamp and hands the generous
-// forward-lean budget to the backward lean.
+using cameraunlock::config::DropRule;
+using cameraunlock::config::DroppedValue;
+using cameraunlock::config::ImportResult;
+using cameraunlock::config::LegacyInput;
+using cameraunlock::config::LegacyPoseShaping;
+using cameraunlock::config::PoseShapingValue;
+using cameraunlock::input::KeyBinding;
+using cameraunlock::input::KeyModifiers;
 
-bool FileExists(const char* path) {
-    return GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES;
+// A legacy hotkey code and its Ctrl+Shift chord switch as one key list: the code's binding
+// when it is a key code, then the chord.
+std::string KeyList(int vk, bool chord, char letter, const char* key, std::vector<DroppedValue>& dropped) {
+    cameraunlock::config::LegacyVirtualKeyToBindings(vk, "Hotkeys", key, dropped);
+    std::vector<KeyBinding> bindings;
+    if (vk >= 0x01 && vk <= 0xFE) bindings.push_back({KeyModifiers::kNone, vk});
+    if (chord) bindings.push_back({KeyModifiers::kCtrl | KeyModifiers::kShift, letter});
+    return cameraunlock::input::FormatKeyBindings(bindings);
 }
 
-void WriteGeneralSection(cameraunlock::IniWriter& w) {
-    w.WriteSection("General");
-    w.WriteBool("EnableOnStartup", kDefaultEnableOnStartup);
-    w.WriteInt("Port", kDefaultPort);
-    w.WriteComment("Yaw mode: true = horizon-locked yaw (default), false = camera-local.");
-    w.WriteBool("WorldSpaceYaw", kDefaultWorldSpaceYaw);
-    w.WriteComment("Projects the game's aim point into the head-tracked view.");
-    w.WriteComment("The reticle leaves the screen when the aim point is outside the view.");
-    w.WriteBool("MoveCrosshair", kDefaultMoveCrosshair);
-}
+ImportResult Import(const LegacyInput& input, Config& out) {
+    // The published build opened the file by the ANSI path it built itself, not the one the
+    // owner derives, so the import builds it the same way.
+    const std::string ansiPath = LegacyAnsiPath(input.path);
+    if (ansiPath.empty()) {
+        return ImportResult::Refused(
+            "its path has no ANSI form within MAX_PATH, so the version that wrote this file could "
+            "not open it and did not start");
+    }
 
-void WriteSensitivitySection(cameraunlock::IniWriter& w) {
-    w.WriteSection("Sensitivity");
-    w.WriteDouble("Yaw", kDefaultSensitivity);
-    w.WriteDouble("Pitch", kDefaultSensitivity);
-    w.WriteDouble("Roll", kDefaultSensitivity);
-    w.WriteComment("Flip an axis only if your tracker reports it backwards. The engine's own");
-    w.WriteComment("sign conventions are already handled; these three ship off.");
-    w.WriteBool("InvertYaw", kDefaultInvert);
-    w.WriteBool("InvertPitch", kDefaultInvert);
-    w.WriteBool("InvertRoll", kDefaultInvert);
-}
+    legacy::Config c;
+    const legacy::ReadResult read = c.Read(ansiPath.c_str());
+    if (read.status == legacy::ReadStatus::Refused) {
+        return ImportResult::Refused(read.reason);
+    }
 
-void WriteSmoothingSection(cameraunlock::IniWriter& w) {
-    w.WriteSection("Smoothing");
-    w.WriteComment("Chosen per connection from the tracker's source address; covers rotation and position.");
-    w.WriteComment("LocalSmoothing: tracker running on this machine (loopback). 0 = none, 1 = heavy.");
-    w.WriteDouble("LocalSmoothing", kDefaultLocalSmoothing);
-    w.WriteComment("RemoteSmoothing: tracker on a remote network device. 0 = none, 1 = heavy.");
-    w.WriteDouble("RemoteSmoothing", kDefaultRemoteSmoothing);
-}
+    std::vector<DroppedValue> dropped;
+    std::vector<PoseShapingValue> shaping;
 
-void WritePositionSection(cameraunlock::IniWriter& w) {
-    w.WriteSection("Position");
-    w.WriteComment("6DOF positional tracking. PositionScale = world units (cm) per metre of head translation.");
-    w.WriteBool("Enabled", kDefaultPositionEnabled);
-    w.WriteDouble("SensitivityX", kDefaultPosSens);
-    w.WriteDouble("SensitivityY", kDefaultPosSens);
-    w.WriteDouble("SensitivityZ", kDefaultPosSens);
-    w.WriteDouble("LimitX", kDefaultPosLimitX);
-    w.WriteDouble("LimitY", kDefaultPosLimitY);
-    w.WriteDouble("LimitZ", kDefaultPosLimitZ);
-    w.WriteDouble("LimitZBack", kDefaultPosLimitZBack);
-    w.WriteDouble("PositionScale", kDefaultPositionScale);
-}
+    out.enable_on_startup = c.enabled_on_startup;
+    out.udp_port = c.udp_port;
+    out.world_space_yaw = c.world_space_yaw;
 
-void WriteCollisionSection(cameraunlock::IniWriter& w) {
-    w.WriteSection("Collision");
-    w.WriteComment("Trace positional lean against the level. Off by default.");
-    w.WriteBool("Enabled", kDefaultCollision);
-    w.WriteComment("World units (cm) kept between the camera and the surface it stopped at.");
-    w.WriteDouble("Margin", kDefaultCollisionMargin);
-    w.WriteComment("How quickly the lean reopens once whatever blocked it is gone.");
-    w.WriteComment("0 = instantly, 1 = very slowly. Blocking is always immediate.");
-    w.WriteDouble("ReleaseSmoothing", kDefaultCollisionRelease);
-    w.WriteComment("Trace flags the world query is cast with. 0 uses the value for your");
-    w.WriteComment("game build.");
-    w.WriteHex("Channel", static_cast<int>(kDefaultCollisionChannel));
-}
+    // [Position] Enabled chose only the startup mode: the cycle key reached every mode
+    // either way.
+    const cameraunlock::TrackingModeChannels mode = cameraunlock::EncodeTrackingMode(
+        c.position_enabled ? cameraunlock::TrackingMode::RotationAndPosition
+                           : cameraunlock::TrackingMode::RotationOnly);
+    out.rotation_enabled = mode.rotation_enabled;
+    out.position_enabled = mode.position_enabled;
 
-void WriteDiagnosticsSection(cameraunlock::IniWriter& w) {
-    w.WriteSection("Diagnostics");
-    w.WriteComment("Dumps the game structures this mod reads into HeadTracking.log, once");
-    w.WriteComment("each. Leave it off unless a bug report asks for it: it makes the log");
-    w.WriteComment("hundreds of lines longer and changes nothing about how the mod behaves.");
-    w.WriteBool("StructProbe", kDefaultStructProbe);
-}
+    out.local_smoothing = c.local_smoothing;
+    out.position.local_smoothing = c.local_smoothing;
+    out.remote_smoothing = c.remote_smoothing;
+    out.position.remote_smoothing = c.remote_smoothing;
 
-void WriteHotkeysSection(cameraunlock::IniWriter& w) {
-    w.WriteSection("Hotkeys");
-    w.WriteComment("Virtual-key codes. Defaults: End (toggle), Page Up (cycle tracking mode), Page Down (yaw mode).");
-    w.WriteHex("Toggle", kDefaultVkToggle);
-    w.WriteHex("CycleMode", kDefaultVkCycleMode);
-    w.WriteHex("YawMode", kDefaultVkYawMode);
-    w.WriteComment("Chord alternatives: Ctrl+Shift+Y (toggle), Ctrl+Shift+G (cycle tracking mode), Ctrl+Shift+H (yaw mode).");
-    w.WriteBool("ChordToggle", kDefaultChord);
-    w.WriteBool("ChordCycleMode", kDefaultChord);
-    w.WriteBool("ChordYawMode", kDefaultChord);
-}
+    // The old file had one vertical limit, which the old runtime applied both ways.
+    out.position.limit_x = c.pos_limit_x;
+    out.position.limit_y = c.pos_limit_y;
+    out.position.limit_y_down = c.pos_limit_y;
+    out.position.limit_z = c.pos_limit_z;
+    out.position.limit_z_back = c.pos_limit_z_back;
 
-// Returns false when the file could not be created, so the caller can say WHY the
-// config is missing. Without it the only diagnostic was "Failed to open INI", which
-// names the symptom of a game directory the player cannot write to, not the cause.
-bool WriteDefaultIni(const char* path) {
-    cameraunlock::IniWriter w;
-    if (!w.Open(path)) return false;
-    w.WriteComment("Thief - Head Tracking configuration");
-    w.WriteComment("Lives next to dinput8.dll in Binaries2/Win64/.");
-    w.WriteBlankLine();
-    WriteGeneralSection(w);
-    w.WriteBlankLine();
-    WriteSensitivitySection(w);
-    w.WriteBlankLine();
-    WriteSmoothingSection(w);
-    w.WriteBlankLine();
-    WritePositionSection(w);
-    w.WriteBlankLine();
-    WriteCollisionSection(w);
-    w.WriteBlankLine();
-    WriteHotkeysSection(w);
-    w.WriteBlankLine();
-    WriteDiagnosticsSection(w);
-    w.Close();
-    return true;
+    // The lean clamp shipped switched off pending verification in this game, so it takes the
+    // table's default (approved change follows_default).
+    out.collision_enabled = MakeConfigTable().defaults().collision_enabled;
+    if (c.collision_enabled != out.collision_enabled) {
+        dropped.push_back({DropRule::FollowsDefault, "Collision", "Enabled", c.collision_enabled ? "true" : "false"});
+    }
+    out.lean_clamp.skin = c.collision_margin;
+    out.lean_clamp.release_smoothing = c.collision_release_smoothing;
+    // The field holds the flag word's 32 bits; the camera collision reads them back unsigned.
+    out.collision_channel = static_cast<int>(c.collision_channel);
+
+    out.struct_probe = c.struct_probe;
+
+    // Every rotation sensitivity and inversion and every position sensitivity shipped at
+    // identity, so nothing folds and a value the player changed is dropped. The unit scale
+    // shipped at the centimetres per metre the camera hook now applies itself.
+    LegacyPoseShaping(c.sens_yaw, 1.0f, "Sensitivity", "Yaw", shaping, dropped);
+    LegacyPoseShaping(c.sens_pitch, 1.0f, "Sensitivity", "Pitch", shaping, dropped);
+    LegacyPoseShaping(c.sens_roll, 1.0f, "Sensitivity", "Roll", shaping, dropped);
+    LegacyPoseShaping(c.invert_yaw, false, "Sensitivity", "InvertYaw", shaping, dropped);
+    LegacyPoseShaping(c.invert_pitch, false, "Sensitivity", "InvertPitch", shaping, dropped);
+    LegacyPoseShaping(c.invert_roll, false, "Sensitivity", "InvertRoll", shaping, dropped);
+    LegacyPoseShaping(c.pos_sens_x, 1.0f, "Position", "SensitivityX", shaping, dropped);
+    LegacyPoseShaping(c.pos_sens_y, 1.0f, "Position", "SensitivityY", shaping, dropped);
+    LegacyPoseShaping(c.pos_sens_z, 1.0f, "Position", "SensitivityZ", shaping, dropped);
+    LegacyPoseShaping(c.position_scale, kWorldUnitsPerMetre, "Position", "PositionScale", shaping, dropped);
+
+    // The game's reticle now always follows the aim.
+    if (!c.move_crosshair) dropped.push_back({DropRule::Reticle, "General", "MoveCrosshair", "false"});
+
+    out.toggle_key_name = KeyList(c.vk_toggle, c.chord_toggle, 'Y', "Toggle", dropped);
+    out.cycle_tracking_mode_key_name = KeyList(c.vk_cycle_mode, c.chord_cycle_mode, 'G', "CycleMode", dropped);
+    out.yaw_mode_key_name = KeyList(c.vk_yaw_mode, c.chord_yaw_mode, 'H', "YawMode", dropped);
+
+    return read.status == legacy::ReadStatus::Absent ? ImportResult::Absent(std::move(dropped), std::move(shaping))
+                                                     : ImportResult::Imported(std::move(dropped), std::move(shaping));
 }
 
 }  // namespace
 
-bool Config::LoadOrCreate(const char* iniPath) {
-    if (!iniPath || !*iniPath) {
-        Log::Line("ERROR: could not resolve the directory this mod was loaded from, so "
-                  "there is nowhere to read the INI from. The mod will not start.");
-        return false;
-    }
-    if (!FileExists(iniPath) && !WriteDefaultIni(iniPath)) {
-        Log::Line("ERROR: could not create the default INI at %s. The game directory is "
-                  "not writable by this account.", iniPath);
-        return false;
-    }
+cameraunlock::config::ConfigTable<Config> MakeConfigTable() {
+    using cameraunlock::config::schema::Concept;
+    cameraunlock::config::ConfigTable<Config> table = cameraunlock::config::HeadTrackingConfigTable<Config>(
+        {Concept::UdpPort, Concept::EnableOnStartup, Concept::WorldSpaceYaw, Concept::RotationEnabled,
+         Concept::LocalSmoothing, Concept::RemoteSmoothing, Concept::PositionEnabled, Concept::PositionLimitX,
+         Concept::PositionLimitY, Concept::PositionLimitYDown, Concept::PositionLimitZ, Concept::PositionLimitZBack,
+         Concept::CollisionEnabled, Concept::CollisionMargin, Concept::CollisionChannel,
+         Concept::CollisionReleaseSmoothing, Concept::ToggleKey, Concept::CycleTrackingModeKey,
+         Concept::YawModeKey});
+    table.Select(Concept::WorldSpaceYaw).Writable()
+        .Select(Concept::RotationEnabled).Writable()
+        .Select(Concept::PositionEnabled).Writable();
+    table.Select(Concept::CollisionMargin)
+        .Comment("How far, in centimetres, the view is held off a wall when you lean into it.");
+    table.Select(Concept::CollisionChannel)
+        .Comment("The trace flags the wall check is cast with, as a decimal number.\n"
+                 "0 uses the flags pinned for your game build.");
+    table.Local("Diagnostics", "StructProbe", &Config::struct_probe, cameraunlock::config::BoolCodec(),
+                "true: write the game structures this mod reads to HeadTracking.log, once each.\n"
+                "Leave it off unless a bug report asks for it: it makes the log hundreds of lines longer.");
+    return table;
+}
 
-    legacy::Config frozen;
-    const legacy::ReadResult read = frozen.Read(iniPath);
-    if (read.status == legacy::ReadStatus::Absent) {
-        Log::Line("ERROR: Failed to open INI: %s", iniPath);
-        return false;
-    }
-    if (read.status == legacy::ReadStatus::Refused) {
-        return false;
-    }
+cameraunlock::config::LegacyImport<Config> MakeLegacyImport() {
+    return {&Import, legacy::ReadKeys()};
+}
 
-    enabled_on_startup = frozen.enabled_on_startup;
-    udp_port = frozen.udp_port;
-    sens_yaw = frozen.sens_yaw;
-    sens_pitch = frozen.sens_pitch;
-    sens_roll = frozen.sens_roll;
-    invert_yaw = frozen.invert_yaw;
-    invert_pitch = frozen.invert_pitch;
-    invert_roll = frozen.invert_roll;
-    local_smoothing = frozen.local_smoothing;
-    remote_smoothing = frozen.remote_smoothing;
-    move_crosshair = frozen.move_crosshair;
-    world_space_yaw = frozen.world_space_yaw;
-    position_enabled = frozen.position_enabled;
-    pos_sens_x = frozen.pos_sens_x;
-    pos_sens_y = frozen.pos_sens_y;
-    pos_sens_z = frozen.pos_sens_z;
-    pos_limit_x = frozen.pos_limit_x;
-    pos_limit_y = frozen.pos_limit_y;
-    pos_limit_z = frozen.pos_limit_z;
-    pos_limit_z_back = frozen.pos_limit_z_back;
-    position_scale = frozen.position_scale;
-    collision_enabled = frozen.collision_enabled;
-    collision_margin = frozen.collision_margin;
-    collision_release_smoothing = frozen.collision_release_smoothing;
-    collision_channel = frozen.collision_channel;
-    struct_probe = frozen.struct_probe;
-    vk_toggle = frozen.vk_toggle;
-    vk_cycle_mode = frozen.vk_cycle_mode;
-    vk_yaw_mode = frozen.vk_yaw_mode;
-    chord_toggle = frozen.chord_toggle;
-    chord_cycle_mode = frozen.chord_cycle_mode;
-    chord_yaw_mode = frozen.chord_yaw_mode;
-    return true;
+cameraunlock::config::ConfigOwnerOptions<Config> MakeConfigOwnerOptions(const std::wstring& folder,
+                                                                        cameraunlock::config::DefaultsFile defaults) {
+    const auto wide = [](const char* name) { return std::wstring(name, name + std::char_traits<char>::length(name)); };
+    cameraunlock::config::ConfigOwnerOptions<Config> options;
+    options.path = folder + wide(kConfigFileName);
+    options.legacy_path = folder + wide(kLegacyConfigFileName);
+    options.table = MakeConfigTable();
+    options.import = MakeLegacyImport();
+    options.header.display_name = kConfigDisplayName;
+    options.defaults = std::move(defaults);
+    return options;
 }
 
 }  // namespace ThiefHeadTracking

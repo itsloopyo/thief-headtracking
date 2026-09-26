@@ -4,7 +4,6 @@
 #pragma once
 
 #include "build_profile.h"
-#include "config.h"
 #include "tracking_runtime.h"
 
 #include <cstdint>
@@ -19,6 +18,6 @@ namespace ThiefHeadTracking {
 // none, the marker is not published: producing one costs a world trace on every rendered
 // frame and nothing would read it.
 bool InstallCameraHook(const BuildProfile& profile, std::uintptr_t moduleBase,
-                       TrackingRuntime& tracking, const Config& cfg, bool reticleInstalled);
+                       TrackingRuntime& tracking, bool reticleAvailable);
 
 }  // namespace ThiefHeadTracking

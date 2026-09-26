@@ -15,10 +15,10 @@ namespace ThiefHeadTracking {
 // what a session pins them again with after a patch moves them: a field is identified by
 // the shape of its value - a field of view sits at 60-90, a rotator component in
 // [-32768, 32767], a pointer is an absurd float - and confirmed by watching it change in
-// game. It runs only when the INI turns it on, and only once per label per session.
+// game. It runs only when the config turns it on, and only once per label per session.
 void ProbeStruct(const char* label, const void* obj, std::uint32_t bytes);
 
-// Turns the probe on. Off unless the INI asks for it: the dump is long, and a log a
+// Turns the probe on. Off unless the config asks for it: the dump is long, and a log a
 // player is asked to send should not open with 512 lines of hex.
 void SetStructProbeEnabled(bool enabled);
 bool StructProbeEnabled();

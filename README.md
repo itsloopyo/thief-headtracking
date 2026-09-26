@@ -48,11 +48,11 @@ The installer copies two files and nothing else, so you can place them by hand.
 1. Open `Binaries2\Win64\` inside your Thief install folder. `Shipping-ThiefGame.exe` is in there.
 2. From the installer ZIP, copy `vendor\ultimate-asi-loader\dinput8.dll` into that folder. This is Ultimate ASI Loader, renamed to a DLL the game already imports so Windows loads it.
 3. From the same ZIP, copy `plugins\ThiefHeadTracking.asi` into that folder, beside the loader.
-4. Launch the game. `ThiefHeadTracking.ini` and `HeadTracking.log` are written next to those two files on the first run.
+4. Launch the game. `CameraUnlock.ini` and `HeadTracking.log` are written next to those two files on the first run.
 
 Use `install.cmd`, or place the two files by hand as above, rather than a mod manager. These two files have to sit beside `Shipping-ThiefGame.exe` in `Binaries2\Win64\`, and a manager deploys into one fixed folder inside the game that is not that one, so the archive installs somewhere the game never looks while the manager reports success.
 
-To remove a manual install, delete the two files you copied, plus the INI and the log.
+To remove a manual install, delete the two files you copied and `HeadTracking.log`. `CameraUnlock.ini` holds your settings, so leave it if you may install the mod again.
 
 ## Setting Up OpenTrack
 
@@ -99,6 +99,10 @@ Two equivalent binding sets - use whichever your keyboard has:
 
 `Page Down` / `Ctrl+Shift+H` switches head yaw between horizon-locked and camera-local. Horizon-locked is the default and keeps "up" where it is however the mouse is pitched.
 
+The tracking mode and the yaw mode are saved to `CameraUnlock.ini` as soon as you change them, and come back at the next start. `End` / `Ctrl+Shift+Y` changes the current session only: whether tracking is on at startup is `EnableOnStartup`.
+
+Each action's keys are a list in the `[Hotkeys]` section of `CameraUnlock.ini`, the chord included, so any of them can be rebound or removed.
+
 The mod draws no text of its own, so a mode you switch to is named in `HeadTracking.log` rather than on screen.
 
 ### Aiming the bow
@@ -109,77 +113,131 @@ Leaning eases out while the bow is drawn, because it would move your eye off the
 
 ## Configuration
 
-Settings live in `ThiefHeadTracking.ini`, written into `Binaries2\Win64\` next to the loader the first time the mod runs. Edit it with the game closed.
+Apart from creating `CameraUnlock.ini` at startup when there is none, the mod writes to it only when a hotkey changes the tracking mode or the yaw mode. It never writes `ThiefHeadTracking.ini` or `Defaults.ini`. Edit `CameraUnlock.ini` with the game closed.
+
+<!-- cameraunlock:config -->
+The mod reads its settings from `Binaries2\Win64\CameraUnlock.ini` in the game folder, and creates the file when it starts and finds none. Edit it with any text editor.
+
+A setting set to `default` takes its value from `Defaults.ini`, which every head tracking mod that keeps its settings in `CameraUnlock.ini` reads. Head tracking mods that keep their settings in another file do not read it, and neither do earlier versions of this mod. Writing a value in place of `default` changes that setting for this game only. When the mod saves a setting that a hotkey changed in game, it writes the new value in place of `default`, so that setting no longer follows `Defaults.ini` in this game until you set it to `default` again.
+
+`Defaults.ini` is `%AppData%\CameraUnlock\Defaults.ini` on Windows; `$XDG_CONFIG_HOME/CameraUnlock/Defaults.ini` on Linux, or `~/.config/CameraUnlock/Defaults.ini` where `XDG_CONFIG_HOME` is not set, under Wine and Proton too; and `~/Library/Application Support/CameraUnlock/Defaults.ini` on macOS. The mod's log, where it writes one, names the file it read.
+
+When the mod starts and finds no `Defaults.ini`, it creates one holding the built-in values, unless Windows runs the game as a packaged app. The mod never changes `Defaults.ini` after that. Edit it with any text editor.
+
+Earlier versions of the mod kept these settings in `ThiefHeadTracking.ini`, in the same folder. The first time this version starts and finds no `CameraUnlock.ini`, it reads your settings from `ThiefHeadTracking.ini` and writes them into `CameraUnlock.ini`. It never changes `ThiefHeadTracking.ini`, and does not read it again while `CameraUnlock.ini` exists.
+
+A setting that the defaults below set to `default` is written as `default` when the value imported for it equals its default at that start, which is the value `Defaults.ini` gives it, or the built-in value where `Defaults.ini` gives none. It then follows `Defaults.ini`. Every other setting is written with the value imported for it. `RotationEnabled` and `PositionEnabled` are one setting here, the tracking mode, so both are written as `default` or neither is.
+
+Comments, and keys the mod never read, are not carried over. Nor are these, where your old file had them:
+
+- Reticle settings, and a key that toggled the reticle.
+- A sensitivity, scale, deadzone, response curve or axis inversion you changed from its default. Set these in your tracker instead.
+- The setting for a feature that earlier versions shipped switched off while it was untested. It now follows the mod's default.
+
+An older version of the mod reads `ThiefHeadTracking.ini` and never reads `CameraUnlock.ini`, so a setting you change after updating is not in `ThiefHeadTracking.ini`.
+
+Deleting only `CameraUnlock.ini` makes the next start read `ThiefHeadTracking.ini` again. To go back to the defaults, replace everything in `CameraUnlock.ini` with the defaults below. Every setting they set to `default` then follows `Defaults.ini`.
+
+The built-in value of each setting set to `default` below:
+
+- `UdpPort=4242`
+- `EnableOnStartup=true`
+- `WorldSpaceYaw=true`
+- `RotationEnabled=true`
+- `LocalSmoothing=0.0`
+- `RemoteSmoothing=0.15`
+- `PositionEnabled=true`
+- `PositionLimitX=0.3`
+- `PositionLimitY=0.2`
+- `PositionLimitYDown=0.2`
+- `PositionLimitZ=0.4`
+- `PositionLimitZBack=0.1`
+- `CollisionEnabled=true`
+- `CollisionReleaseSmoothing=0.9`
+- `ToggleKey=End, Ctrl+Shift+Y`
+- `CycleTrackingModeKey=PageUp, Ctrl+Shift+G`
+- `YawModeKey=PageDown, Ctrl+Shift+H`
+
+With every setting at its default, the file reads:
 
 ```ini
-; Thief - Head Tracking configuration
-; Lives next to dinput8.dll in Binaries2/Win64/.
+; Thief head tracking settings.
+; Comments start with ; and go on their own line. Text after a value is part of the value.
+; Hotkeys are key names such as End, PageUp or Ctrl+Shift+Y. Separate several with commas; leave empty for none.
+; A setting set to default takes its value from Defaults.ini, which every head tracking mod
+; that keeps its settings in CameraUnlock.ini reads: %AppData%\CameraUnlock\Defaults.ini on
+; Windows, $XDG_CONFIG_HOME/CameraUnlock/Defaults.ini (normally ~/.config/CameraUnlock) on
+; Linux, under Wine and Proton too, and ~/Library/Application Support/CameraUnlock/Defaults.ini
+; on macOS. The log names the file it read. Write a value instead of default to change that
+; setting for this game only.
+
+[CameraUnlock]
+; Written by the mod. Leave this section in place.
+ConfigFormat=1
+
+[Network]
+; UDP port the mod receives tracker data on (OpenTrack protocol).
+UdpPort=default
 
 [General]
-EnableOnStartup=1
-Port=4242
-; Yaw mode: true = horizon-locked yaw (default), false = camera-local.
-WorldSpaceYaw=1
-; Projects the game's aim point into the head-tracked view.
-; The reticle leaves the screen when the aim point is outside the view.
-MoveCrosshair=1
-
-[Sensitivity]
-Yaw=1
-Pitch=1
-Roll=1
-; Flip an axis only if your tracker reports it backwards. The engine's own
-; sign conventions are already handled; these three ship off.
-InvertYaw=0
-InvertPitch=0
-InvertRoll=0
+; true: head tracking is on when the game starts. ToggleKey turns it on and off.
+EnableOnStartup=default
+; true: yaw turns around the world's up axis. false: around the camera's own up axis.
+WorldSpaceYaw=default
+; true: turning your head turns the view.
+; Tracking mode at startup, with PositionEnabled. The mode hotkey changes both.
+RotationEnabled=default
 
 [Smoothing]
-; Chosen per connection from the tracker's source address; covers rotation and position.
-; LocalSmoothing: tracker running on this machine (loopback). 0 = none, 1 = heavy.
-LocalSmoothing=0
-; RemoteSmoothing: tracker on a remote network device. 0 = none, 1 = heavy.
-RemoteSmoothing=0.15
+; Smoothing when the tracker runs on this PC. 0 is the least, 1 the most.
+LocalSmoothing=default
+; Smoothing when the tracker is another device on the network, such as a phone.
+; 0 is the least, 1 the most.
+RemoteSmoothing=default
 
 [Position]
-; 6DOF positional tracking. PositionScale = world units (cm) per metre of head translation.
-Enabled=1
-SensitivityX=1
-SensitivityY=1
-SensitivityZ=1
-LimitX=0.3
-LimitY=0.2
-LimitZ=0.4
-LimitZBack=0.1
-PositionScale=100
-
-[Collision]
-; Trace positional lean against the level. Off by default.
-Enabled=0
-; World units (cm) kept between the camera and the surface it stopped at.
-Margin=20
-; How quickly the lean reopens once whatever blocked it is gone.
-; 0 = instantly, 1 = very slowly. Blocking is always immediate.
-ReleaseSmoothing=0.9
-; Trace flags the world query is cast with. 0 uses the value for your game build.
-Channel=0x00
+; true: moving your head moves the view.
+; Tracking mode at startup, with RotationEnabled. The mode hotkey changes both.
+PositionEnabled=default
+; How far, in metres, leaning left or right can move the view.
+PositionLimitX=default
+; How far, in metres, raising your head can move the view.
+PositionLimitY=default
+; How far, in metres, lowering your head can move the view.
+PositionLimitYDown=default
+; How far, in metres, leaning forward can move the view.
+PositionLimitZ=default
+; How far, in metres, leaning back can move the view.
+PositionLimitZBack=default
+; true: leaning stops at walls instead of moving the view through them.
+CollisionEnabled=default
+; How far, in centimetres, the view is held off a wall when you lean into it.
+; CollisionMargin=20.0
+; The trace flags the wall check is cast with, as a decimal number.
+; 0 uses the flags pinned for your game build.
+; CollisionChannel=0
+; How gently the view eases back out after a wall stopped a lean.
+; 0 is the quickest, 1 the slowest.
+CollisionReleaseSmoothing=default
 
 [Hotkeys]
-; Virtual-key codes. Defaults: End (toggle), Page Up (cycle tracking mode), Page Down (yaw mode).
-Toggle=0x23
-CycleMode=0x21
-YawMode=0x22
-; Chord alternatives: Ctrl+Shift+Y (toggle), Ctrl+Shift+G (cycle tracking mode), Ctrl+Shift+H (yaw mode).
-ChordToggle=1
-ChordCycleMode=1
-ChordYawMode=1
+; Turns head tracking on and off.
+ToggleKey=default
+; Changes the tracking mode: rotation and position, rotation only, position only.
+CycleTrackingModeKey=default
+; Switches yaw between the world's up axis and the camera's own (WorldSpaceYaw).
+YawModeKey=default
 
 [Diagnostics]
-; Dumps the game structures this mod reads into HeadTracking.log, once each.
-; Leave it off unless a bug report asks for it: it makes the log hundreds of
-; lines longer and changes nothing about how the mod behaves.
-StructProbe=0
+; true: write the game structures this mod reads to HeadTracking.log, once each.
+; Leave it off unless a bug report asks for it: it makes the log hundreds of lines longer.
+StructProbe=false
 ```
+<!-- /cameraunlock:config -->
+
+There are no sensitivity, inversion or scale settings: the mod applies the pose your tracker sends, so set those in the tracker. Leaning converts at 100 game units (centimetres) per metre of head movement, the value earlier versions shipped as `PositionScale`.
+
+`CollisionMargin` is how far, in centimetres, a lean stops short of a wall. `CollisionChannel` is the trace flag word the wall check is cast with, written as a decimal number; `0` uses the flags pinned for your game build.
 
 Thief has its own field of view slider in the graphics options, so the mod adds none. It reads the field of view the game is rendering and scales head tracking to it, so your head moves the view by the same amount at any setting.
 
@@ -194,7 +252,7 @@ Thief has its own field of view slider in the graphics options, so the mod adds 
 **No tracking response:**
 
 - Confirm your tracker is running and started, with output set to UDP at `127.0.0.1:4242`.
-- Check that `Port` in the INI matches the port your tracker sends to.
+- Check that `UdpPort` in `CameraUnlock.ini`, or in `Defaults.ini` where it says `default`, matches the port your tracker sends to.
 - Press `End` or `Ctrl+Shift+Y`. Tracking may be toggled off, and every toggle is recorded in `HeadTracking.log`.
 - If a firewall prompt appeared the first time your tracker sent, allow it. A blocked sender looks exactly like no tracker at all.
 
@@ -207,11 +265,11 @@ Thief has its own field of view slider in the graphics options, so the mod adds 
 **Wrong rotation axis:**
 
 - If yaw feels wrong while you are looking steeply up or down, switch yaw mode with `Page Down` or `Ctrl+Shift+H`. Horizon-locked is the default; camera-local turns about the axis the camera currently points along.
-- If a whole axis runs backwards, fix it in your tracker's profile. `InvertYaw`, `InvertPitch` and `InvertRoll` are there for a tracker that genuinely reports a rotation axis backwards. There is no equivalent for leaning: a mirrored lean is a tracker profile to correct, not a game setting.
+- If a whole axis runs backwards, fix it in your tracker's profile. The mod has no axis inversion settings.
 
 **The crosshair drifts off where the arrow lands:**
 
-- Check that `[General] MoveCrosshair=1`. The mod projects the clean aim point into the tracked view, including positional lean. If the target leaves the view, the reticle leaves it too.
+- The mod moves the game's bow reticle onto the clean aim point in the tracked view, including positional lean, and there is no setting that turns this off. If the target leaves the view, the reticle leaves it too.
 
 **The bow is off to one side when I draw it:**
 
@@ -219,7 +277,7 @@ Thief has its own field of view slider in the graphics options, so the mod adds 
 
 **Leaning into a wall shows you what is behind it:**
 
-- Positional collision is off by default. Set `[Collision] Enabled=1` to enable the level trace, or lower the `[Position]` limits.
+- The lean is traced against the level while `CollisionEnabled` is `true`, which is the built-in value. `HeadTracking.log` says at startup whether the trace is on for your game build. If a lean still goes through a wall, lower the `[Position]` limits.
 
 ## Updating
 
@@ -227,7 +285,7 @@ Download the new release and run `install.cmd` again. Your config is preserved.
 
 ## Uninstalling
 
-Run `uninstall.cmd`. This removes the mod DLLs. The mod loader is only removed if the installer put it there. Use `uninstall.cmd /force` to remove it anyway.
+Run `uninstall.cmd`. This removes the mod DLLs. The mod loader is only removed if the installer put it there. Use `uninstall.cmd /force` to remove it anyway. `CameraUnlock.ini` and `ThiefHeadTracking.ini` are left in `Binaries2\Win64\`, so your settings survive a reinstall.
 
 ## Building from Source
 

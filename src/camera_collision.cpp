@@ -148,18 +148,15 @@ void ReportState(bool queried, bool contact, bool queryFailed, float requested,
 void InitCameraCollision(const Config& cfg) {
     g_clamp.Reset();
     g_lastTick.QuadPart = 0;
-    g_margin = cfg.collision_margin;
+    g_margin = cfg.lean_clamp.skin;
     g_enabled = cfg.collision_enabled && WorldTraceReady();
 
-    cameraunlock::camera::LeanClampSettings settings;
     // The policy's skin and the trace's margin are the same number on purpose, and
     // LeanTraceLength depends on it: core adds the skin to the lean before it calls the
     // query, and that function subtracts the margin back off to land the ray exactly one
     // overreach past the requested lean. Set them from two different values and the ray is
     // short by the difference, with nothing to say so - the trace reports an honest miss.
-    settings.skin = cfg.collision_margin;
-    settings.release_smoothing = cfg.collision_release_smoothing;
-    g_clamp.SetSettings(settings);
+    g_clamp.SetSettings(cfg.lean_clamp);
 
     if (!cfg.collision_enabled) {
         Log::Line("Camera collision off by config: leaning will push the view through "
@@ -167,8 +164,8 @@ void InitCameraCollision(const Config& cfg) {
         return;
     }
     if (!g_enabled) {
-        Log::Line("WARN: camera collision is on in the INI but the world trace is not "
-                  "bound; leaning is unclamped");
+        Log::Line("WARN: CollisionEnabled is on but the world trace is not bound; leaning "
+                  "is unclamped");
         return;
     }
     Log::Line("Camera collision on: the lean is traced against the world and stops %.1f "

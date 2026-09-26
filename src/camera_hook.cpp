@@ -78,7 +78,6 @@ struct HookSettings {
     GetFovAngle_t getFovAngle = nullptr;
     std::uint32_t offPlayerCamera = 0;
     std::uint32_t offCamDefaultFov = 0;
-    float positionScale = 0.0f;
     bool moveCrosshair = false;
 };
 HookSettings g_hook;
@@ -256,7 +255,7 @@ void ApplyPositionOffset(const FrameSample& s, const UE3Rotator& clean, float zo
     // the 0.40 m to the backward lean, which reads in game as "leaning in barely moves,
     // pulling back moves a lot". x is mirrored the same way and is converted in the same
     // place; its clamp is symmetric so only the direction changes.
-    const float scale = g_hook.positionScale * zoom;
+    const float scale = kWorldUnitsPerMetre * zoom;
     const float oR = -s.pos_x * scale;
     const float oU =  s.pos_y * scale;
     const float oF = -s.pos_z * scale;
@@ -286,7 +285,7 @@ void ApplyPositionOffset(const FrameSample& s, const UE3Rotator& clean, float zo
 //
 // Core's ScaleAngleForZoom is atan(tan(angle) * factor), and its contract says the angle
 // must be inside +/-90. Nothing upstream keeps it there: the processor decomposes yaw into
-// (-180, 180] and the INI sensitivity then multiplies it. Out of that range the tangent
+// (-180, 180]. Out of that range the tangent
 // wraps rather than saturating, so 120 degrees of head yaw comes back as -60 and the view
 // snaps to the opposite side of the player as the head crosses 90 - a 180 degree flip
 // between two frames. Saturating at the bound is monotonic, so the view stops turning
@@ -433,7 +432,7 @@ void* __fastcall CalcSceneViewDetour(void* self, void* family, void* outLoc, voi
 }  // namespace
 
 bool InstallCameraHook(const BuildProfile& profile, std::uintptr_t moduleBase,
-                       TrackingRuntime& tracking, const Config& cfg, bool reticleAvailable) {
+                       TrackingRuntime& tracking, bool reticleAvailable) {
     g_tracking = &tracking;
     g_hook.profile = &profile;
     g_hook.moduleBase = moduleBase;
@@ -447,12 +446,11 @@ bool InstallCameraHook(const BuildProfile& profile, std::uintptr_t moduleBase,
     g_hook.getFovAngle = profile.rvaGetFovAngle
                              ? reinterpret_cast<GetFovAngle_t>(moduleBase + profile.rvaGetFovAngle)
                              : nullptr;
-    g_hook.positionScale = cfg.position_scale;
     // Only where something reads it. The marker costs a full-length world trace inside the
     // viewpoint accessor on every rendered frame, and with no reticle hook installed the
     // only reader is a throttled log line. It would also blame the aim trace, in a WARN, for
     // a reticle that is standing down because no hook was ever built for this build.
-    g_hook.moveCrosshair = cfg.move_crosshair && reticleAvailable;
+    g_hook.moveCrosshair = reticleAvailable;
 
     // The caller filter has to be live before the viewpoint hook can trust it, so this one
     // goes first.

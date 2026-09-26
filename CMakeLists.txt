@@ -101,12 +101,12 @@ if(THIEF_BUILD_TESTS)
         add_test(NAME ${name} COMMAND ${name})
     endfunction()
 
-    # src/config.cpp is compiled in, not just its headers: the sanitizers were already
-    # covered but the CALL SITES were not, so a test drives an INI through
-    # Config::LoadOrCreate and asserts what comes out. The rest of what this suite covers
+    # The frozen legacy reader is compiled in, not just its headers: the sanitizers were
+    # already covered but the CALL SITES were not, so a test drives an INI through
+    # legacy::Config::Read and asserts what comes out. The rest of what this suite covers
     # - the UE3 rotator maths, the aim projection, the zoom factor and the lean trace
     # geometry - is header-only and needs no game.
-    thief_add_test(thief_tests src/config.cpp src/legacy_config/legacy_config.cpp src/build_profile.cpp)
+    thief_add_test(thief_tests src/legacy_config/legacy_config.cpp src/build_profile.cpp)
 
     # The lean easing while the bow is drawn. src/ads.h is header-only, so it needs no game
     # or build profile.
@@ -154,17 +154,34 @@ if(THIEF_BUILD_TESTS)
 
     add_executable(config_differential_tests
         tests/config_differential/differential_tests.cpp
+        src/config.cpp
         src/legacy_config/legacy_config.cpp
+        src/path_utils.cpp
     )
     target_include_directories(config_differential_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/config_differential)
     target_compile_definitions(config_differential_tests PRIVATE
-        THIEF_DIFFERENTIAL_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/config_differential/data")
+        THIEF_DIFFERENTIAL_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/config_differential/data"
+        THIEF_COMMITTED_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/config/ThiefHeadTracking.ini")
     target_link_libraries(config_differential_tests PRIVATE
         cameraunlock thief_config_oracle thief_hotkeys_oracle)
     if(MSVC)
         target_compile_options(config_differential_tests PRIVATE /W4 /WX /permissive-)
     endif()
     add_test(NAME config_differential_tests COMMAND config_differential_tests)
+
+    # Core's canonical config lint over the committed file and every file the differential
+    # test migrated, which it writes beside itself under migrated.
+    add_test(NAME config_lint COMMAND node
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/config_differential/lint-migrated.mjs
+        $<TARGET_FILE_DIR:config_differential_tests>/migrated)
+    set_tests_properties(config_lint PROPERTIES DEPENDS config_differential_tests)
+
+    # The committed config against the table, a first start, the toggles' saves, the trace
+    # flag word and the legacy file's ANSI path. `--render-config <path>` makes it write the
+    # committed file instead (pixi run render-config).
+    thief_add_test(config_tests src/config.cpp src/legacy_config/legacy_config.cpp src/path_utils.cpp)
+    target_compile_definitions(config_tests PRIVATE
+        THIEF_COMMITTED_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/config/ThiefHeadTracking.ini")
 endif()

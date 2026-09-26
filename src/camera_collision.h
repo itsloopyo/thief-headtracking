@@ -9,7 +9,7 @@
 namespace ThiefHeadTracking {
 
 // Binds the lean clamp to the world trace and takes the configured margin and release
-// pacing. Reports what it did to the log. Switched off in the INI, or on with no trace
+// pacing. Reports what it did to the log. Switched off in the config, or on with no trace
 // bound for this build, ClampLean returns before it reaches the policy at all and every
 // lean passes through untouched.
 void InitCameraCollision(const Config& cfg);
