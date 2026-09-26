@@ -113,7 +113,7 @@ Leaning eases out while the bow is drawn, because it would move your eye off the
 
 ## Configuration
 
-Apart from creating `CameraUnlock.ini` at startup when there is none, the mod writes to it only when a hotkey changes the tracking mode or the yaw mode. It never writes `ThiefHeadTracking.ini` or `Defaults.ini`. Edit `CameraUnlock.ini` with the game closed.
+Apart from creating `CameraUnlock.ini` at startup when there is none, the mod writes to it only when a hotkey changes the tracking mode or the yaw mode. It never writes `ThiefHeadTracking.ini`, and it creates `Defaults.ini` only when there is none and never changes it. Edit `CameraUnlock.ini` with the game closed.
 
 <!-- cameraunlock:config -->
 The mod reads its settings from `Binaries2\Win64\CameraUnlock.ini` in the game folder, and creates the file when it starts and finds none. Edit it with any text editor.
@@ -212,7 +212,7 @@ PositionLimitZBack=default
 ; true: leaning stops at walls instead of moving the view through them.
 CollisionEnabled=default
 ; How far, in centimetres, the view is held off a wall when you lean into it.
-; CollisionMargin=20.0
+CollisionMargin=20.0
 ; The trace flags the wall check is cast with, as a decimal number.
 ; 0 uses the flags pinned for your game build.
 ; CollisionChannel=0
