@@ -21,9 +21,16 @@
 // A value the canonical row cannot hold has no approved rule, so the owner defers that import
 // and the session runs on what the import gave (kUnrepresentable).
 //
+// A setting the player never changed from what the published build shipped follows Defaults.ini:
+// the import lists its row in follows_defaults_ini, the tracking mode pair as one unit, and the
+// migration writes it `default`. The test derives that list from what the frozen reader read and
+// holds the import's list to it on every input; the dev build's first-run output, an empty file
+// and no file leave every row to Defaults.ini.
+//
 // Comparison 2 runs twice, once over a Defaults.ini at the built-in values and once over one a
-// player changed, since the migration writes default exactly where the imported value equals
-// what Defaults.ini gives. After every load ThiefHeadTracking.ini keeps its bytes, its write
+// player changed on every row this game takes from it. Over the changed one, a row left to
+// Defaults.ini runs on that file's value and is written `default`, and every other row runs on
+// the import's. After every load ThiefHeadTracking.ini keeps its bytes, its write
 // time and its attributes, Defaults.ini is never written, and the folder holds the legacy file
 // and CameraUnlock.ini and nothing else (the legacy file alone when nothing was imported). The
 // next load reads CameraUnlock.ini, imports nothing and writes nothing, and a read-only legacy
@@ -60,6 +67,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <initializer_list>
 #include <iterator>
 #include <optional>
 #include <set>
@@ -478,6 +486,9 @@ FileStamp Stamp(const fs::path& path) {
 // load creates, and with the values a player changed, written from it.
 fs::path g_builtinDefaults;
 fs::path g_alteredDefaults;
+// What each Defaults.ini gives: the settings a fresh install starts on over it.
+Config g_builtinConfig;
+Config g_alteredConfig;
 
 cfg::ConfigOwnerOptions<Config> OwnerOptions(const fs::path& dir, const fs::path& defaults) {
     return MakeConfigOwnerOptions(dir.wstring() + L"\\", cfg::DefaultsFile::At(defaults.wstring()));
@@ -514,6 +525,9 @@ struct Tally {
     int with_pose_shaping_dropped = 0;
     int with_reticle_dropped = 0;
     int with_follows_default = 0;
+    // Inputs where the player changed at least one row, and where they changed the tracking mode.
+    int touched = 0;
+    int mode_touched = 0;
 };
 
 // Every pose-shaping value the frozen reader read is listed in its place, folded where it holds
@@ -570,40 +584,123 @@ void CheckDrops(const std::string& name, const legacy::Config& l, const ImportRe
     }
 }
 
+using cfg::schema::Concept;
+using ConceptSet = std::set<Concept>;
+
+// Every row of the table that follows Defaults.ini.
+const ConceptSet& FollowingRows() {
+    static const ConceptSet rows = {
+        Concept::UdpPort,           Concept::EnableOnStartup,  Concept::WorldSpaceYaw,
+        Concept::RotationEnabled,   Concept::PositionEnabled,  Concept::LocalSmoothing,
+        Concept::RemoteSmoothing,   Concept::PositionLimitX,   Concept::PositionLimitY,
+        Concept::PositionLimitYDown, Concept::PositionLimitZ,  Concept::PositionLimitZBack,
+        Concept::CollisionEnabled,  Concept::CollisionReleaseSmoothing, Concept::ToggleKey,
+        Concept::CycleTrackingModeKey, Concept::YawModeKey,
+    };
+    return rows;
+}
+
+// The rows the player never changed: each reads as the published build shipped it. LimitY
+// stands for both vertical bounds, a hotkey for its code and its chord switch together, and the
+// tracking mode is both rows or neither.
+ConceptSet UntouchedRows(const legacy::Config& l) {
+    const legacy::Config s;
+    ConceptSet changed;
+    const auto mark = [&changed](bool same, std::initializer_list<Concept> rows) {
+        if (!same) changed.insert(rows.begin(), rows.end());
+    };
+    mark(l.udp_port == s.udp_port, {Concept::UdpPort});
+    mark(l.enabled_on_startup == s.enabled_on_startup, {Concept::EnableOnStartup});
+    mark(l.world_space_yaw == s.world_space_yaw, {Concept::WorldSpaceYaw});
+    mark(l.position_enabled == s.position_enabled, {Concept::RotationEnabled, Concept::PositionEnabled});
+    mark(l.local_smoothing == s.local_smoothing, {Concept::LocalSmoothing});
+    mark(l.remote_smoothing == s.remote_smoothing, {Concept::RemoteSmoothing});
+    mark(l.pos_limit_x == s.pos_limit_x, {Concept::PositionLimitX});
+    mark(l.pos_limit_y == s.pos_limit_y, {Concept::PositionLimitY, Concept::PositionLimitYDown});
+    mark(l.pos_limit_z == s.pos_limit_z, {Concept::PositionLimitZ});
+    mark(l.pos_limit_z_back == s.pos_limit_z_back, {Concept::PositionLimitZBack});
+    mark(l.collision_enabled == s.collision_enabled, {Concept::CollisionEnabled});
+    mark(l.collision_release_smoothing == s.collision_release_smoothing, {Concept::CollisionReleaseSmoothing});
+    mark(l.vk_toggle == s.vk_toggle && l.chord_toggle == s.chord_toggle, {Concept::ToggleKey});
+    mark(l.vk_cycle_mode == s.vk_cycle_mode && l.chord_cycle_mode == s.chord_cycle_mode,
+         {Concept::CycleTrackingModeKey});
+    mark(l.vk_yaw_mode == s.vk_yaw_mode && l.chord_yaw_mode == s.chord_yaw_mode, {Concept::YawModeKey});
+    ConceptSet untouched;
+    for (const Concept row : FollowingRows()) {
+        if (!changed.count(row)) untouched.insert(row);
+    }
+    return untouched;
+}
+
+std::string Names(const ConceptSet& rows) {
+    std::string text;
+    for (const Concept row : rows) {
+        text += (text.empty() ? "" : ", ") + std::string(cfg::schema::kConcepts[static_cast<std::size_t>(row)].name);
+    }
+    return text.empty() ? "none" : text;
+}
+
 // The settings the mod starts on after the migration against the ones the frozen reader's build
 // started on, with the approved changes applied: identity pose shaping (CheckDrops holds the
-// import to recording every value it leaves out), no reticle switch, and the lean clamp at the
-// table's default. The frozen reader's build applied its one LimitY both ways.
-std::vector<std::string> StartupDifferences(const legacy::Config& l, const Config& m) {
-    std::vector<std::string> d;
-    if (m.enable_on_startup != l.enabled_on_startup) d.push_back("EnableOnStartup");
-    if (m.udp_port != l.udp_port) d.push_back("UdpPort");
-    if (m.world_space_yaw != l.world_space_yaw) d.push_back("WorldSpaceYaw");
+// import to recording every value it leaves out), no reticle switch, and a lean clamp the player
+// switched on kept on. The frozen reader's build applied its one LimitY both ways. A row in
+// `follows` runs on `d`, what Defaults.ini gives, instead of the legacy value.
+std::vector<std::string> StartupDifferences(const legacy::Config& l, const Config& m, const ConceptSet& follows,
+                                            const Config& d) {
+    std::vector<std::string> diff;
+    const auto from = [&follows](Concept row) { return follows.count(row) != 0; };
+    const auto flag = [&](Concept row, bool got, bool legacyValue, bool defaultsValue, const char* name) {
+        if (got != (from(row) ? defaultsValue : legacyValue)) diff.push_back(name);
+    };
+    const auto number = [&](Concept row, float got, float legacyValue, float defaultsValue, const char* name) {
+        if (!SameBits(got, from(row) ? defaultsValue : legacyValue)) diff.push_back(name);
+    };
+    flag(Concept::EnableOnStartup, m.enable_on_startup, l.enabled_on_startup, d.enable_on_startup, "EnableOnStartup");
+    if (m.udp_port != (from(Concept::UdpPort) ? d.udp_port : l.udp_port)) diff.push_back("UdpPort");
+    flag(Concept::WorldSpaceYaw, m.world_space_yaw, l.world_space_yaw, d.world_space_yaw, "WorldSpaceYaw");
+    if (from(Concept::RotationEnabled) != from(Concept::PositionEnabled)) diff.push_back("half a tracking mode");
     const auto mode = cameraunlock::DecodeTrackingMode(m.rotation_enabled, m.position_enabled);
-    if (!mode || *mode != (l.position_enabled ? cameraunlock::TrackingMode::RotationAndPosition
-                                              : cameraunlock::TrackingMode::RotationOnly)) {
-        d.push_back("tracking mode");
+    const auto wantMode = from(Concept::PositionEnabled)
+                              ? cameraunlock::DecodeTrackingMode(d.rotation_enabled, d.position_enabled)
+                              : std::optional<cameraunlock::TrackingMode>(
+                                    l.position_enabled ? cameraunlock::TrackingMode::RotationAndPosition
+                                                       : cameraunlock::TrackingMode::RotationOnly);
+    if (!mode || mode != wantMode) diff.push_back("tracking mode");
+    number(Concept::LocalSmoothing, m.local_smoothing, l.local_smoothing, d.local_smoothing, "LocalSmoothing");
+    number(Concept::LocalSmoothing, m.position.local_smoothing, l.local_smoothing, d.position.local_smoothing,
+           "LocalSmoothing (position)");
+    number(Concept::RemoteSmoothing, m.remote_smoothing, l.remote_smoothing, d.remote_smoothing, "RemoteSmoothing");
+    number(Concept::RemoteSmoothing, m.position.remote_smoothing, l.remote_smoothing, d.position.remote_smoothing,
+           "RemoteSmoothing (position)");
+    number(Concept::PositionLimitX, m.position.limit_x, l.pos_limit_x, d.position.limit_x, "PositionLimitX");
+    number(Concept::PositionLimitY, m.position.limit_y, l.pos_limit_y, d.position.limit_y, "PositionLimitY");
+    number(Concept::PositionLimitYDown, m.position.limit_y_down, l.pos_limit_y, d.position.limit_y_down,
+           "PositionLimitYDown");
+    number(Concept::PositionLimitZ, m.position.limit_z, l.pos_limit_z, d.position.limit_z, "PositionLimitZ");
+    number(Concept::PositionLimitZBack, m.position.limit_z_back, l.pos_limit_z_back, d.position.limit_z_back,
+           "PositionLimitZBack");
+    // The clamp shipped off, so a legacy value that is not left to Defaults.ini is one the player
+    // switched on.
+    flag(Concept::CollisionEnabled, m.collision_enabled, true, d.collision_enabled, "CollisionEnabled");
+    if (!SameBits(m.lean_clamp.skin, l.collision_margin)) diff.push_back("CollisionMargin");
+    number(Concept::CollisionReleaseSmoothing, m.lean_clamp.release_smoothing, l.collision_release_smoothing,
+           d.lean_clamp.release_smoothing, "CollisionReleaseSmoothing");
+    if (static_cast<std::uint32_t>(m.collision_channel) != l.collision_channel) diff.push_back("CollisionChannel");
+    if (m.struct_probe != l.struct_probe) diff.push_back("StructProbe");
+    // Each action fires as Defaults.ini binds it where its row follows that file, and as the
+    // legacy build fired it everywhere else.
+    const thief_oracle_view::FireTable legacyFires = thief_oracle_view::OracleFires(KeysOf(l));
+    const thief_oracle_view::FireTable defaultsFires = CurrentFires(d);
+    const Concept keyRows[3] = {Concept::ToggleKey, Concept::CycleTrackingModeKey, Concept::YawModeKey};
+    thief_oracle_view::FireTable expected = legacyFires;
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        for (int action = 0; action < 3; ++action) {
+            if (from(keyRows[action])) expected[i][action] = defaultsFires[i][action];
+        }
     }
-    if (!SameBits(m.local_smoothing, l.local_smoothing) || !SameBits(m.position.local_smoothing, l.local_smoothing)) {
-        d.push_back("LocalSmoothing");
-    }
-    if (!SameBits(m.remote_smoothing, l.remote_smoothing) || !SameBits(m.position.remote_smoothing, l.remote_smoothing)) {
-        d.push_back("RemoteSmoothing");
-    }
-    if (!SameBits(m.position.limit_x, l.pos_limit_x)) d.push_back("PositionLimitX");
-    if (!SameBits(m.position.limit_y, l.pos_limit_y)) d.push_back("PositionLimitY");
-    if (!SameBits(m.position.limit_y_down, l.pos_limit_y)) d.push_back("PositionLimitYDown");
-    if (!SameBits(m.position.limit_z, l.pos_limit_z)) d.push_back("PositionLimitZ");
-    if (!SameBits(m.position.limit_z_back, l.pos_limit_z_back)) d.push_back("PositionLimitZBack");
-    if (m.collision_enabled != MakeConfigTable().defaults().collision_enabled) d.push_back("CollisionEnabled");
-    if (!SameBits(m.lean_clamp.skin, l.collision_margin)) d.push_back("CollisionMargin");
-    if (!SameBits(m.lean_clamp.release_smoothing, l.collision_release_smoothing)) d.push_back("CollisionReleaseSmoothing");
-    if (static_cast<std::uint32_t>(m.collision_channel) != l.collision_channel) d.push_back("CollisionChannel");
-    if (m.struct_probe != l.struct_probe) d.push_back("StructProbe");
-    const thief_oracle_view::FireTable before = thief_oracle_view::OracleFires(KeysOf(l));
-    const thief_oracle_view::FireTable after = CurrentFires(m);
-    if (before != after) d.push_back("hotkeys: " + FirstFireDifference(before, after));
-    return d;
+    const thief_oracle_view::FireTable got = CurrentFires(m);
+    if (expected != got) diff.push_back("hotkeys: " + FirstFireDifference(expected, got));
+    return diff;
 }
 
 bool Unrepresentable(const legacy::Config& l) {
@@ -653,7 +750,7 @@ void Comparison2(Scratch& scratch, const Input& input, const ImportRun& import, 
         Check(after.files == Files{{kConfigFileName, tally.committed}},
               name + ": the folder does not hold CameraUnlock.ini as config/ThiefHeadTracking.ini and nothing else");
         if (builtin) {
-            const std::vector<std::string> d = StartupDifferences(import.config, loaded.config);
+            const std::vector<std::string> d = StartupDifferences(import.config, loaded.config, FollowingRows(), g_builtinConfig);
             Check(d.empty(), name + ": comparison 2: " + Join(d));
         }
         return;
@@ -665,11 +762,22 @@ void Comparison2(Scratch& scratch, const Input& input, const ImportRun& import, 
         return;
     }
 
-    if (builtin) CheckDrops(name, import.config, *mapped, tally);
+    const ConceptSet follows(mapped->follows_defaults_ini.begin(), mapped->follows_defaults_ini.end());
+    if (builtin) {
+        CheckDrops(name, import.config, *mapped, tally);
+        Check(follows.size() == mapped->follows_defaults_ini.size(), name + ": follows_defaults_ini names a row twice");
+        const ConceptSet untouched = UntouchedRows(import.config);
+        Check(follows == untouched, name + ": the import leaves " + Names(follows) +
+                                        " to Defaults.ini, and the player never changed " + Names(untouched));
+        if (untouched != FollowingRows()) ++tally.touched;
+        if (!untouched.count(Concept::PositionEnabled)) ++tally.mode_touched;
+    }
 
-    // Imported or deferred, the session runs on the settings the load hands back.
+    // Imported or deferred, the session runs on the settings the load hands back: Defaults.ini's
+    // on each row the player never changed, the import's on the rest.
     {
-        const std::vector<std::string> d = StartupDifferences(import.config, loaded.config);
+        const std::vector<std::string> d =
+            StartupDifferences(import.config, loaded.config, follows, builtin ? g_builtinConfig : g_alteredConfig);
         Check(d.empty(), name + ": comparison 2: " + Join(d));
     }
 
@@ -693,6 +801,11 @@ void Comparison2(Scratch& scratch, const Input& input, const ImportRun& import, 
     Check(Contains(loaded.log, "created from"), name + ": the log does not say where CameraUnlock.ini came from");
     const std::string migrated = ReadBytes(config);
     tally.migrated.insert(migrated);
+    for (const Concept row : follows) {
+        const std::string key = cfg::schema::kConcepts[static_cast<std::size_t>(row)].key;
+        Check(migrated.find("\r\n" + key + "=default\r\n") != std::string::npos,
+              name + ": " + key + ", which the player never changed, is not written default");
+    }
     if (migrated.find("=default\r\n") != std::string::npos) ++run.with_default_rows;
     if (migrated != tally.committed) ++run.with_values;
 
@@ -791,6 +904,8 @@ int main() {
             Check(fs::exists(g_builtinDefaults), "the first load did not create Defaults.ini");
         }
         WriteAlteredDefaults();
+        g_builtinConfig = cfg::ConfigOwner<Config>(OwnerOptions(scratch.Clean("builtin-fresh"), g_builtinDefaults)).Load().config;
+        g_alteredConfig = cfg::ConfigOwner<Config>(OwnerOptions(scratch.Clean("altered-fresh"), g_alteredDefaults)).Load().config;
 
         // The dev build's first-run output, committed once as test data, is what the oracle
         // still writes for a missing file.
@@ -823,6 +938,11 @@ int main() {
             if (input.bytes && import.result.status != legacy::ReadStatus::Refused) {
                 mapped = RunMappedImport(scratch, input);
                 Check(mapped->status == ImportStatus::Imported, input.name + ": the mapped import is not Imported");
+                if (input.name == "empty file" || input.name == "dev first-run output") {
+                    Check(ConceptSet(mapped->follows_defaults_ini.begin(), mapped->follows_defaults_ini.end()) ==
+                              FollowingRows(),
+                          input.name + ": not every row follows Defaults.ini");
+                }
             }
             for (const fs::path& defaults : {g_builtinDefaults, g_alteredDefaults}) {
                 Comparison2(scratch, input, import, mapped ? &*mapped : nullptr, defaults, tally);
@@ -850,6 +970,9 @@ int main() {
         Check(tally.with_pose_shaping_dropped > 0, "no input drops a changed pose-shaping value");
         Check(tally.with_reticle_dropped > 0, "no input drops MoveCrosshair");
         Check(tally.with_follows_default > 0, "no input has [Collision] Enabled follow the default");
+        std::printf("  %d with a row the player changed, %d of them the tracking mode\n", tally.touched,
+                    tally.mode_touched);
+        Check(tally.touched > 0 && tally.mode_touched > 0, "no input changes a row, or none the tracking mode");
         Check(tally.migrated.count(tally.committed) == 1, "no input migrated to the committed file");
 
         wchar_t exe[MAX_PATH];

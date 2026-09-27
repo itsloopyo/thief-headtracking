@@ -25,17 +25,18 @@ using cameraunlock::config::ImportResult;
 using cameraunlock::config::LegacyInput;
 using cameraunlock::config::LegacyPoseShaping;
 using cameraunlock::config::PoseShapingValue;
-using cameraunlock::input::KeyBinding;
 using cameraunlock::input::KeyModifiers;
 
-// A legacy hotkey code and its Ctrl+Shift chord switch as one key list: the code's binding
-// when it is a key code, then the chord.
+// A legacy hotkey code and its Ctrl+Shift chord switch as one key list: the code's binding,
+// then the chord.
 std::string KeyList(int vk, bool chord, char letter, const char* key, std::vector<DroppedValue>& dropped) {
-    cameraunlock::config::LegacyVirtualKeyToBindings(vk, "Hotkeys", key, dropped);
-    std::vector<KeyBinding> bindings;
-    if (vk >= 0x01 && vk <= 0xFE) bindings.push_back({KeyModifiers::kNone, vk});
-    if (chord) bindings.push_back({KeyModifiers::kCtrl | KeyModifiers::kShift, letter});
-    return cameraunlock::input::FormatKeyBindings(bindings);
+    std::string list = cameraunlock::config::LegacyVirtualKeyToBindings(vk, "Hotkeys", key, dropped);
+    if (chord) {
+        const std::string chordKey =
+            cameraunlock::input::FormatKeyBindings({{KeyModifiers::kCtrl | KeyModifiers::kShift, letter}});
+        list += (list.empty() ? "" : ", ") + chordKey;
+    }
+    return list;
 }
 
 ImportResult Import(const LegacyInput& input, Config& out) {
@@ -115,8 +116,34 @@ ImportResult Import(const LegacyInput& input, Config& out) {
     out.cycle_tracking_mode_key_name = KeyList(c.vk_cycle_mode, c.chord_cycle_mode, 'G', "CycleMode", dropped);
     out.yaw_mode_key_name = KeyList(c.vk_yaw_mode, c.chord_yaw_mode, 'H', "YawMode", dropped);
 
-    return read.status == legacy::ReadStatus::Absent ? ImportResult::Absent(std::move(dropped), std::move(shaping))
-                                                     : ImportResult::Imported(std::move(dropped), std::move(shaping));
+    // A setting the player never changed from what the published build shipped follows
+    // Defaults.ini. LimitY stood for both vertical bounds, and each hotkey for its code and its
+    // chord switch together.
+    using cameraunlock::config::schema::Concept;
+    const legacy::Config shipped;
+    cameraunlock::config::LegacyFollowsDefaultsIni follows;
+    follows.Setting(Concept::UdpPort, c.udp_port, shipped.udp_port);
+    follows.Setting(Concept::EnableOnStartup, c.enabled_on_startup, shipped.enabled_on_startup);
+    follows.Setting(Concept::WorldSpaceYaw, c.world_space_yaw, shipped.world_space_yaw);
+    follows.TrackingMode(c.position_enabled, shipped.position_enabled);
+    follows.Setting(Concept::LocalSmoothing, c.local_smoothing, shipped.local_smoothing);
+    follows.Setting(Concept::RemoteSmoothing, c.remote_smoothing, shipped.remote_smoothing);
+    follows.Setting(Concept::PositionLimitX, c.pos_limit_x, shipped.pos_limit_x);
+    follows.Setting(Concept::PositionLimitY, c.pos_limit_y, shipped.pos_limit_y);
+    follows.Setting(Concept::PositionLimitYDown, c.pos_limit_y, shipped.pos_limit_y);
+    follows.Setting(Concept::PositionLimitZ, c.pos_limit_z, shipped.pos_limit_z);
+    follows.Setting(Concept::PositionLimitZBack, c.pos_limit_z_back, shipped.pos_limit_z_back);
+    follows.Setting(Concept::CollisionEnabled, c.collision_enabled, shipped.collision_enabled);
+    follows.Setting(Concept::CollisionReleaseSmoothing, c.collision_release_smoothing,
+                    shipped.collision_release_smoothing);
+    follows.Setting(Concept::ToggleKey, c.vk_toggle == shipped.vk_toggle && c.chord_toggle == shipped.chord_toggle);
+    follows.Setting(Concept::CycleTrackingModeKey,
+                    c.vk_cycle_mode == shipped.vk_cycle_mode && c.chord_cycle_mode == shipped.chord_cycle_mode);
+    follows.Setting(Concept::YawModeKey, c.vk_yaw_mode == shipped.vk_yaw_mode && c.chord_yaw_mode == shipped.chord_yaw_mode);
+
+    return read.status == legacy::ReadStatus::Absent
+               ? ImportResult::Absent(std::move(dropped), std::move(shaping), follows.Concepts())
+               : ImportResult::Imported(std::move(dropped), std::move(shaping), follows.Concepts());
 }
 
 }  // namespace
