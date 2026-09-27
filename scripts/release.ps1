@@ -83,6 +83,13 @@ if ($Version -notmatch '^\d+\.\d+\.\d+$') {
     exit 1
 }
 
+try {
+    Assert-ReleaseNotBelowCanonicalSince -RepoRoot $projectRoot -Version $Version
+} catch {
+    Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
+    exit 1
+}
+
 $tagName = "v$Version"
 
 $currentBranch = git -C $projectRoot rev-parse --abbrev-ref HEAD
