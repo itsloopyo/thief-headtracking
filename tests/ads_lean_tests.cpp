@@ -2,7 +2,8 @@
 // Copyright (c) 2026 itsloopyo
 //
 // Head tracking stays on while the bow is drawn. The lean is the only thing the draw eases
-// out, and these checks hold the camera hook to that: the hook scales x, y and z by
+// out, and only in sights locked; true free look keeps it. These checks hold the camera hook
+// to that: the hook scales x, y and z by
 // LeanEase and hands rotation through untouched, so a pose run through the same two steps
 // here is what reaches the camera.
 
@@ -50,9 +51,9 @@ FrameSample Pose() {
 }
 
 // The two steps the camera hook runs on a frame.
-FrameSample Apply(LeanEase& ease, bool aiming, unsigned long long nowMs) {
+FrameSample Apply(LeanEase& ease, bool aiming, unsigned long long nowMs, bool trueFreeLook = false) {
     FrameSample s = Pose();
-    const float scale = ease.Update(aiming, nowMs);
+    const float scale = ease.Update(aiming, trueFreeLook, nowMs);
     s.pos_x *= scale;
     s.pos_y *= scale;
     s.pos_z *= scale;
@@ -132,6 +133,38 @@ void ResetReturnsToTheHip() {
     CheckNear(s.pos_x, 0.1f, "a reset puts the whole lean back");
 }
 
+// True free look keeps the whole lean through the draw: the bow stays put in the world.
+void TrueFreeLookKeepsTheLeanWithTheBowDrawn() {
+    LeanEase ease;
+    Apply(ease, true, 1000, true);
+    const FrameSample s = Apply(ease, true, 1000 + kLowerMs, true);
+    CheckRotationUntouched(s, "in true free look with the bow drawn");
+    CheckNear(s.pos_x, 0.1f, "true free look keeps x with the bow drawn");
+    CheckNear(s.pos_y, 0.2f, "and y");
+    CheckNear(s.pos_z, -0.3f, "and z");
+    const FrameSample hip = Apply(ease, false, 2000, true);
+    CheckNear(hip.pos_x, 0.1f, "and at the hip");
+}
+
+// Toggling mid-draw rides the fade: from free look to sights locked the lean slides out, and
+// back again it turns round where it is.
+void TheToggleMidDrawRidesTheFade() {
+    LeanEase ease;
+    Apply(ease, true, 1000, true);
+    Apply(ease, true, 1000 + kLowerMs, true);
+    const FrameSample first = Apply(ease, true, 2000, false);
+    CheckNear(first.pos_x, 0.1f, "switching to sights locked mid-draw does not step");
+    const FrameSample half = Apply(ease, true, 2000 + kLowerMs / 2, false);
+    Check(half.pos_x > 0.0f && half.pos_x < 0.1f, "the lean slides out after the switch");
+    const FrameSample back = Apply(ease, true, 2000 + kLowerMs / 2, true);
+    CheckNear(back.pos_x, half.pos_x, "switching back continues from where the slide got to");
+    const FrameSample next = Apply(ease, true, 2000 + kLowerMs / 2 + 16, true);
+    Check(next.pos_x > back.pos_x && next.pos_x - back.pos_x < 0.02f, "and heads back in without a step");
+    const FrameSample done = Apply(ease, true, 2000 + kLowerMs / 2 + kRaiseMs, true);
+    CheckNear(done.pos_x, 0.1f, "the whole lean is back in true free look");
+    CheckRotationUntouched(done, "after the toggle");
+}
+
 }  // namespace
 
 int main() {
@@ -141,6 +174,8 @@ int main() {
     MidTransitionOnlyTheLeanIsScaled();
     AReversalContinuesFromWhereItWas();
     ResetReturnsToTheHip();
+    TrueFreeLookKeepsTheLeanWithTheBowDrawn();
+    TheToggleMidDrawRidesTheFade();
 
     if (g_failures != 0) {
         std::printf("%d ADS lean check(s) failed\n", g_failures);

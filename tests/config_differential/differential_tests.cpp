@@ -595,7 +595,8 @@ const ConceptSet& FollowingRows() {
         Concept::RemoteSmoothing,   Concept::PositionLimitX,   Concept::PositionLimitY,
         Concept::PositionLimitYDown, Concept::PositionLimitZ,  Concept::PositionLimitZBack,
         Concept::CollisionEnabled,  Concept::CollisionReleaseSmoothing, Concept::ToggleKey,
-        Concept::CycleTrackingModeKey, Concept::YawModeKey,
+        Concept::CycleTrackingModeKey, Concept::YawModeKey, Concept::TrueFreeLook,
+        Concept::TrueFreeLookKey,
     };
     return rows;
 }
@@ -625,6 +626,11 @@ ConceptSet UntouchedRows(const legacy::Config& l) {
     mark(l.vk_cycle_mode == s.vk_cycle_mode && l.chord_cycle_mode == s.chord_cycle_mode,
          {Concept::CycleTrackingModeKey});
     mark(l.vk_yaw_mode == s.vk_yaw_mode && l.chord_yaw_mode == s.chord_yaw_mode, {Concept::YawModeKey});
+    // The legacy build had no true free look. Its key list keeps only the chord, and so stops
+    // following Defaults.ini, where the player moved another action onto Insert.
+    constexpr int kVkInsert = 0x2D;
+    mark(l.vk_toggle != kVkInsert && l.vk_cycle_mode != kVkInsert && l.vk_yaw_mode != kVkInsert,
+         {Concept::TrueFreeLookKey});
     ConceptSet untouched;
     for (const Concept row : FollowingRows()) {
         if (!changed.count(row)) untouched.insert(row);
@@ -687,6 +693,8 @@ std::vector<std::string> StartupDifferences(const legacy::Config& l, const Confi
            d.lean_clamp.release_smoothing, "CollisionReleaseSmoothing");
     if (static_cast<std::uint32_t>(m.collision_channel) != l.collision_channel) diff.push_back("CollisionChannel");
     if (m.struct_probe != l.struct_probe) diff.push_back("StructProbe");
+    // The legacy build had no true free look, and its bow-aim cycle is never read as one.
+    flag(Concept::TrueFreeLook, m.true_free_look, false, d.true_free_look, "TrueFreeLook");
     // Each action fires as Defaults.ini binds it where its row follows that file, and as the
     // legacy build fired it everywhere else.
     const thief_oracle_view::FireTable legacyFires = thief_oracle_view::OracleFires(KeysOf(l));

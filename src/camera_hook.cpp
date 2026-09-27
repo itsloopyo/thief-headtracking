@@ -61,9 +61,9 @@ CalcSceneView_t g_origCalcSceneView = nullptr;
 GetPlayerViewPoint_t g_origGetViewPoint = nullptr;
 TrackingRuntime* g_tracking = nullptr;
 
-// Eases the lean out while the bow is drawn. Touched only from the viewpoint detour, which
-// runs on the game thread for the scene-view caller alone, so it needs no synchronisation
-// of its own - the same restriction TrackingRuntime::SampleFrame relies on.
+// Eases the lean out while the bow is drawn in sights locked. Touched only from the viewpoint
+// detour, which runs on the game thread for the scene-view caller alone, so it needs no
+// synchronisation of its own - the same restriction TrackingRuntime::SampleFrame relies on.
 LeanEase g_leanEase;
 
 // Everything the detours read that is only known once the build profile is matched and
@@ -374,7 +374,7 @@ void __fastcall GetPlayerViewPointDetour(void* self, void* outLoc, void* outRot)
     if (s.has_position) {
         // Polled from the game every frame rather than latched, so a missed edge heals on
         // the next one. Rotation is deliberately left out of this.
-        const float leanScale = g_leanEase.Update(aiming, GetTickCount64());
+        const float leanScale = g_leanEase.Update(aiming, tracking->IsTrueFreeLook(), GetTickCount64());
         s.pos_x *= leanScale;
         s.pos_y *= leanScale;
         s.pos_z *= leanScale;

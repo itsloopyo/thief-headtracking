@@ -27,6 +27,9 @@ using cameraunlock::config::LegacyPoseShaping;
 using cameraunlock::config::PoseShapingValue;
 using cameraunlock::input::KeyModifiers;
 
+// The legacy file named hotkeys by virtual-key code.
+constexpr int kLegacyVkInsert = 0x2D;
+
 // A legacy hotkey code and its Ctrl+Shift chord switch as one key list: the code's binding,
 // then the chord.
 std::string KeyList(int vk, bool chord, char letter, const char* key, std::vector<DroppedValue>& dropped) {
@@ -116,6 +119,15 @@ ImportResult Import(const LegacyInput& input, Config& out) {
     out.cycle_tracking_mode_key_name = KeyList(c.vk_cycle_mode, c.chord_cycle_mode, 'G', "CycleMode", dropped);
     out.yaw_mode_key_name = KeyList(c.vk_yaw_mode, c.chord_yaw_mode, 'H', "YawMode", dropped);
 
+    // The legacy build had no true free look. Where the player moved another action onto
+    // Insert, the free-look list keeps only its chord, so one key never fires two actions.
+    const bool insertTaken = c.vk_toggle == kLegacyVkInsert || c.vk_cycle_mode == kLegacyVkInsert ||
+                             c.vk_yaw_mode == kLegacyVkInsert;
+    if (insertTaken) {
+        out.true_free_look_key_name =
+            cameraunlock::input::FormatKeyBindings({{KeyModifiers::kCtrl | KeyModifiers::kShift, 'U'}});
+    }
+
     // A setting the player never changed from what the published build shipped follows
     // Defaults.ini. LimitY stood for both vertical bounds, and each hotkey for its code and its
     // chord switch together.
@@ -140,6 +152,8 @@ ImportResult Import(const LegacyInput& input, Config& out) {
     follows.Setting(Concept::CycleTrackingModeKey,
                     c.vk_cycle_mode == shipped.vk_cycle_mode && c.chord_cycle_mode == shipped.chord_cycle_mode);
     follows.Setting(Concept::YawModeKey, c.vk_yaw_mode == shipped.vk_yaw_mode && c.chord_yaw_mode == shipped.chord_yaw_mode);
+    follows.NotInLegacy(Concept::TrueFreeLook);
+    follows.Setting(Concept::TrueFreeLookKey, !insertTaken);
 
     return read.status == legacy::ReadStatus::Absent
                ? ImportResult::Absent(std::move(dropped), std::move(shaping), follows.Concepts())
@@ -155,11 +169,12 @@ cameraunlock::config::ConfigTable<Config> MakeConfigTable() {
          Concept::LocalSmoothing, Concept::RemoteSmoothing, Concept::PositionEnabled, Concept::PositionLimitX,
          Concept::PositionLimitY, Concept::PositionLimitYDown, Concept::PositionLimitZ, Concept::PositionLimitZBack,
          Concept::CollisionEnabled, Concept::CollisionMargin, Concept::CollisionChannel,
-         Concept::CollisionReleaseSmoothing, Concept::ToggleKey, Concept::CycleTrackingModeKey,
-         Concept::YawModeKey});
+         Concept::CollisionReleaseSmoothing, Concept::TrueFreeLook, Concept::ToggleKey,
+         Concept::CycleTrackingModeKey, Concept::YawModeKey, Concept::TrueFreeLookKey});
     table.Select(Concept::WorldSpaceYaw).Writable()
         .Select(Concept::RotationEnabled).Writable()
-        .Select(Concept::PositionEnabled).Writable();
+        .Select(Concept::PositionEnabled).Writable()
+        .Select(Concept::TrueFreeLook).Writable();
     table.Select(Concept::CollisionMargin)
         .Comment("How far, in centimetres, the view is held off a wall when you lean into it.");
     table.Select(Concept::CollisionChannel)

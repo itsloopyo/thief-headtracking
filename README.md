@@ -89,17 +89,18 @@ A phone on WiFi is a remote connection and gets `RemoteSmoothing`. So does a tra
 
 Two equivalent binding sets - use whichever your keyboard has:
 
-| Action              | Nav-cluster | Chord           |
-|---------------------|-------------|-----------------|
-| Toggle tracking     | `End`       | `Ctrl+Shift+Y`  |
-| Cycle tracking mode | `Page Up`   | `Ctrl+Shift+G`  |
-| Toggle yaw mode     | `Page Down` | `Ctrl+Shift+H`  |
+| Action                | Nav-cluster | Chord           |
+|-----------------------|-------------|-----------------|
+| Toggle tracking       | `End`       | `Ctrl+Shift+Y`  |
+| Cycle tracking mode   | `Page Up`   | `Ctrl+Shift+G`  |
+| Toggle yaw mode       | `Page Down` | `Ctrl+Shift+H`  |
+| Toggle true free look | `Insert`    | `Ctrl+Shift+U`  |
 
 `Page Up` / `Ctrl+Shift+G` cycles tracking mode: full tracking, then rotation only, then position only, then back to full.
 
 `Page Down` / `Ctrl+Shift+H` switches head yaw between horizon-locked and camera-local. Horizon-locked is the default and keeps "up" where it is however the mouse is pitched.
 
-The tracking mode and the yaw mode are saved to `CameraUnlock.ini` as soon as you change them, and come back at the next start. `End` / `Ctrl+Shift+Y` changes the current session only: whether tracking is on at startup is `EnableOnStartup`.
+The tracking mode, the yaw mode and true free look are saved to `CameraUnlock.ini` as soon as you change them, and come back at the next start. `End` / `Ctrl+Shift+Y` changes the current session only: whether tracking is on at startup is `EnableOnStartup`.
 
 Each action's keys are a list in the `[Hotkeys]` section of `CameraUnlock.ini`, the chord included, so any of them can be rebound or removed.
 
@@ -109,11 +110,13 @@ The mod draws no text of its own, so a mode you switch to is named in `HeadTrack
 
 Head tracking stays on while you draw the bow. The bow stays where your mouse or controller points it, so with your head turned it sits off to one side with its aim still lined up, and your arrows land where it points. Head movement is scaled to the zoom, so the draw does not magnify it.
 
-Leaning eases out while the bow is drawn, because it would move your eye off the arrow's line. On the current build the mod cannot yet see the bow being drawn, so the lean stays in.
+By default leaning never takes your eye off the bow's aim: leaning eases out while the bow is drawn, because it would move your eye off the arrow's line. On the current build the mod cannot yet see the bow being drawn, so the lean stays in.
+
+`Insert` / `Ctrl+Shift+U` switches to **true free look**: the bow stays put and your head moves freely around it, so to line up the shot you have to put your head behind it, as you would in VR. It is hard, and it is off by default. The mod saves the mode you pick, so it holds the next time you start the game.
 
 ## Configuration
 
-Apart from creating `CameraUnlock.ini` at startup when there is none, the mod writes to it only when a hotkey changes the tracking mode or the yaw mode. It never writes `ThiefHeadTracking.ini`, and it creates `Defaults.ini` only when there is none and never changes it. Edit `CameraUnlock.ini` with the game closed.
+Apart from creating `CameraUnlock.ini` at startup when there is none, the mod writes to it only when a hotkey changes the tracking mode, the yaw mode or true free look. It never writes `ThiefHeadTracking.ini`, and it creates `Defaults.ini` only when there is none and never changes it. Edit `CameraUnlock.ini` with the game closed.
 
 <!-- cameraunlock:config -->
 The mod reads its settings from `Binaries2\Win64\CameraUnlock.ini` in the game folder, and creates the file when it starts and finds none. Edit it with any text editor.
@@ -133,6 +136,7 @@ The built-in value of each setting set to `default` below:
 - `LocalSmoothing=0.0`
 - `RemoteSmoothing=0.15`
 - `PositionEnabled=true`
+- `TrueFreeLook=false`
 - `PositionLimitX=0.3`
 - `PositionLimitY=0.2`
 - `PositionLimitYDown=0.2`
@@ -143,6 +147,7 @@ The built-in value of each setting set to `default` below:
 - `ToggleKey=End, Ctrl+Shift+Y`
 - `CycleTrackingModeKey=PageUp, Ctrl+Shift+G`
 - `YawModeKey=PageDown, Ctrl+Shift+H`
+- `TrueFreeLookKey=Insert, Ctrl+Shift+U`
 
 With every setting at its default, the file reads:
 
@@ -185,6 +190,9 @@ RemoteSmoothing=default
 ; true: moving your head moves the view.
 ; Tracking mode at startup, with RotationEnabled. The mode hotkey changes both.
 PositionEnabled=default
+; false: while you aim down the sights, leaning keeps your eye on the sights.
+; true: the weapon stays put and your head moves freely around it (true free look).
+TrueFreeLook=default
 ; How far, in metres, leaning left or right can move the view.
 PositionLimitX=default
 ; How far, in metres, raising your head can move the view.
@@ -213,6 +221,8 @@ ToggleKey=default
 CycleTrackingModeKey=default
 ; Switches yaw between the world's up axis and the camera's own (WorldSpaceYaw).
 YawModeKey=default
+; Switches between keeping your eye on the sights and true free look (TrueFreeLook).
+TrueFreeLookKey=default
 
 [Diagnostics]
 ; true: write the game structures this mod reads to HeadTracking.log, once each.
@@ -260,6 +270,10 @@ Thief has its own field of view slider in the graphics options, so the mod adds 
 **The bow is off to one side when I draw it:**
 
 - Your head is turned: the bow stays on your aim and you are looking past it. Turn back to it, or move your aim to where you are looking.
+
+**I can't line up the bow, its aim is off from where I am looking:**
+
+- You are in true free look and your head is leaned off the bow. Move your head back behind it, or press `Insert` / `Ctrl+Shift+U` to return to the default.
 
 **Leaning into a wall shows you what is behind it:**
 

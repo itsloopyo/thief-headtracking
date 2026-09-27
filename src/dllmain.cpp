@@ -93,6 +93,11 @@ void ToggleYawModeAndSave() {
     LogSave(g_configOwner->Save([worldSpace](Config& c) { c.world_space_yaw = worldSpace; }));
 }
 
+void ToggleTrueFreeLookAndSave() {
+    const bool freeLook = Tracking().ToggleTrueFreeLook();
+    LogSave(g_configOwner->Save([freeLook](Config& c) { c.true_free_look = freeLook; }));
+}
+
 void LogFingerprint() {
     HMODULE hExe = GetModuleHandleA(kGameExeName);
     cameraunlock::memory::PeFingerprint fp{};
@@ -121,7 +126,8 @@ bool StartInput(const Config& cfg) {
         cfg,
         [] { Tracking().ToggleEnabled(); },
         [] { CycleTrackingModeAndSave(); },
-        [] { ToggleYawModeAndSave(); });
+        [] { ToggleYawModeAndSave(); },
+        [] { ToggleTrueFreeLookAndSave(); });
 }
 
 bool InstallHooks(const BuildProfile& profile, std::uintptr_t moduleBase, const Config& cfg) {

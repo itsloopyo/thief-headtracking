@@ -51,8 +51,10 @@ public:
     // Each returns the state it switched to.
     cameraunlock::TrackingMode CycleTrackingMode();
     bool ToggleYawMode();
+    bool ToggleTrueFreeLook();
 
     bool IsWorldSpaceYaw() const { return m_worldSpaceYaw.load(std::memory_order_relaxed); }
+    bool IsTrueFreeLook() const { return m_trueFreeLook.load(std::memory_order_relaxed); }
 
 private:
     static constexpr float kMaxFrameDtSec = 0.25f;
@@ -67,6 +69,7 @@ private:
 
     std::atomic<bool> m_enabled{false};
     std::atomic<bool> m_worldSpaceYaw{true};
+    std::atomic<bool> m_trueFreeLook{false};
 };
 
 }  // namespace ThiefHeadTracking

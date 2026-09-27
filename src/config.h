@@ -37,8 +37,9 @@ struct Config : cameraunlock::HeadTrackingConfig {
     }
 };
 
-// The rows of CameraUnlock.ini. Only the tracking mode pair and WorldSpaceYaw are Writable:
-// the mode and yaw hotkeys save the player's choice, and End changes the session only.
+// The rows of CameraUnlock.ini. Only the tracking mode pair, WorldSpaceYaw and TrueFreeLook are
+// Writable: the mode, yaw and free-look hotkeys save the player's choice, and End changes the
+// session only.
 cameraunlock::config::ConfigTable<Config> MakeConfigTable();
 
 // ThiefHeadTracking.ini as the builds before the canonical format read it (legacy_config/),

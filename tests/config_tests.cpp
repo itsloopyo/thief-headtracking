@@ -126,6 +126,37 @@ void TestFirstStartCreatesTheCommittedFile() {
     Check(AllValues(loaded.config) == AllValues(table.defaults()), "a first start runs on the built-in values");
     Check(loaded.config.collision_enabled, "the lean clamp starts on");
     Check(loaded.config.lean_clamp.skin == 20.0f, "the lean clamp keeps this game's 20 cm margin");
+    Check(!loaded.config.true_free_look, "true free look starts off");
+    Check(loaded.config.true_free_look_key_name == "Insert, Ctrl+Shift+U", "true free look is on Insert and Ctrl+Shift+U");
+}
+
+// The retired bow-aim cycle is never translated into true free look. A legacy file from the
+// build that had it imports with free look off and Insert on the free-look list; a canonical
+// file carrying the old key loads with free look off and the key named as unknown.
+void TestTheOldAdsCycleIsNotFreeLook() {
+    {
+        const Scratch s(L"legacy-ads");
+        WriteBytes(s.LegacyPath(), "[General]\r\nAdsMode=tracked\r\n[Hotkeys]\r\nAdsMode=0x2D\r\nChordAdsMode=1\r\n");
+        const auto loaded = cfg::ConfigOwner<Config>(s.Options()).Load();
+        Check(loaded.status == cfg::ConfigLoadStatus::Migrated, "a legacy file carrying AdsMode is Migrated");
+        Check(!loaded.config.true_free_look, "AdsMode=tracked does not turn true free look on");
+        Check(loaded.config.true_free_look_key_name == "Insert, Ctrl+Shift+U", "Insert goes to the free-look toggle");
+    }
+    {
+        const Scratch s(L"canonical-ads");
+        WriteBytes(s.ConfigPath(), Committed() + "\r\n[General]\r\nads_mode=tracked\r\n");
+        const auto loaded = cfg::ConfigOwner<Config>(s.Options()).Load();
+        Check(loaded.status == cfg::ConfigLoadStatus::Canonical, "a canonical file carrying ads_mode still loads");
+        Check(!loaded.config.true_free_look, "ads_mode=tracked does not turn true free look on");
+    }
+    {
+        // A player who moved the master toggle onto Insert keeps it there alone.
+        const Scratch s(L"legacy-insert");
+        WriteBytes(s.LegacyPath(), "[Hotkeys]\r\nToggle=0x2D\r\n");
+        const auto loaded = cfg::ConfigOwner<Config>(s.Options()).Load();
+        Check(loaded.config.toggle_key_name.rfind("Insert", 0) == 0, "the imported toggle keeps Insert");
+        Check(loaded.config.true_free_look_key_name == "Ctrl+Shift+U", "free look keeps only its chord when Insert is taken");
+    }
 }
 
 // A fresh install and an upgrade from the published build's defaults start the same: the map of
@@ -233,8 +264,14 @@ void TestTogglesSave() {
                   std::vector<std::string>{"RotationEnabled=false", "PositionEnabled=true"},
               "saving position only changes the mode pair and nothing else");
 
+        Check(owner.Save([](Config& c) { c.true_free_look = true; }).status == cfg::ConfigSaveStatus::Saved,
+              "true free look saves");
+        const std::string afterFreeLook = ReadBytes(s.ConfigPath());
+        Check(ChangedLines(afterPositionOnly, afterFreeLook) == std::vector<std::string>{"TrueFreeLook=true"},
+              "saving true free look writes its value over default and changes nothing else");
+
         Check(owner.Save([](Config&) {}).status == cfg::ConfigSaveStatus::Saved, "an empty save succeeds");
-        Check(ReadBytes(s.ConfigPath()) == afterPositionOnly, "an empty save writes nothing");
+        Check(ReadBytes(s.ConfigPath()) == afterFreeLook, "an empty save writes nothing");
 
         bool refused = false;
         try {
@@ -243,7 +280,7 @@ void TestTogglesSave() {
             refused = true;
         }
         Check(refused, "EnableOnStartup is not Writable, so the End toggle cannot persist");
-        Check(ReadBytes(s.ConfigPath()) == afterPositionOnly, "a refused save writes nothing");
+        Check(ReadBytes(s.ConfigPath()) == afterFreeLook, "a refused save writes nothing");
 
         Check(ReadBytes(s.defaults) == defaultsBefore, "saving leaves Defaults.ini as it was");
         Check(ReadBytes(s.LegacyPath()) == legacyBytes, "saving leaves ThiefHeadTracking.ini as it was");
@@ -251,8 +288,9 @@ void TestTogglesSave() {
 
     const auto again = cfg::ConfigOwner<Config>(s.Options()).Load();
     Check(again.status == cfg::ConfigLoadStatus::Canonical && again.diagnostics.empty() && !again.config.world_space_yaw &&
-              !again.config.rotation_enabled && again.config.position_enabled && again.config.enable_on_startup,
-          "the saved yaw and tracking mode come back at the next start");
+              !again.config.rotation_enabled && again.config.position_enabled && again.config.enable_on_startup &&
+              again.config.true_free_look,
+          "the saved yaw, tracking mode and true free look come back at the next start");
     Check((Listing(s.game) == std::vector<std::string>{"CameraUnlock.ini", kLegacyConfigFileName}),
           "the game folder holds CameraUnlock.ini and ThiefHeadTracking.ini and nothing else");
 }
@@ -309,6 +347,7 @@ int main(int argc, char** argv) {
         TestLegacyDefaultsMapToTheDefaults();
         TestFirstStartCreatesTheCommittedFile();
         TestTogglesSave();
+        TestTheOldAdsCycleIsNotFreeLook();
         TestTheWholeTraceFlagWordConverts();
         TestAFolderTheCodepageCannotNameImportsAsThePublishedBuildReadIt();
     } catch (const std::exception& e) {
