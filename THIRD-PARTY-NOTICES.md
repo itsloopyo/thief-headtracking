@@ -16,7 +16,7 @@ assets or data files are redistributed here.
 | miniz | as vendored in Ultimate ASI Loader v9.7.4 | MIT | Compiled into the vendored `dinput8.dll` |
 | MinHook | v1.3.4, modified (in `cameraunlock-core/vendor/minhook`) | BSD-2-Clause | Compiled into `ThiefHeadTracking.asi` |
 | MinHook | commit `d94c64d32ea37bc4f5ee47d580709f70c6fb6080`, as pinned by injector | BSD-2-Clause | Compiled into the vendored `dinput8.dll` |
-| cameraunlock-core | `4a5e7f4d1c37efb9074f7f3651cde8327b64715a` | MIT | Compiled into `ThiefHeadTracking.asi` |
+| cameraunlock-core | `ac271752d8fcf37e793b70744aa8eb12588d91ea` | MIT | Compiled into `ThiefHeadTracking.asi` |
 | OpenTrack | n/a | ISC | Not bundled; UDP protocol interoperability only |
 
 ---
@@ -257,7 +257,7 @@ Git submodule at `cameraunlock-core/`, compiled into `ThiefHeadTracking.asi`. Ou
 own code, MIT licensed under a copyright line of its own, reproduced here so the
 notices are complete.
 
-- **Version:** pinned commit `4a5e7f4d1c37efb9074f7f3651cde8327b64715a`
+- **Version:** pinned commit `ac271752d8fcf37e793b70744aa8eb12588d91ea`
 - **License:** MIT
 - **Upstream:** https://github.com/itsloopyo/cameraunlock-core
 - **Usage:** Supplies the shared pose pipeline: the UDP receiver, the interpolator,
