@@ -18,8 +18,9 @@
 // scale the player set away from its shipped value is dropped (pose_shaping), MoveCrosshair=false
 // is dropped (reticle: the game's crosshair always follows the aim now), and [Collision]
 // Enabled, which shipped off pending verification, takes the table's default (follows_default).
-// A value the canonical row cannot hold has no approved rule, so the owner defers that import
-// and the session runs on what the import gave (kUnrepresentable).
+// A [Position] limit above 10, which the frozen reader did not bound and the canonical row cannot
+// hold, is clamped to 10 and recorded as NumberOutOfRange (N4), and still counts as a value the
+// player changed.
 //
 // A setting the player never changed from what the published build shipped follows Defaults.ini:
 // the import lists its row in follows_defaults_ini, the tracking mode pair as one unit, and the
@@ -91,14 +92,10 @@ const char* const kComparison1Differences[] = {
 };
 
 // The published build read the four [Position] limits with no upper bound, and the canonical
-// rows take 0 to 10 metres. Core has no rule for a value outside a concept's range, so the owner
-// defers such a file: it stays as it is, the session runs on what the import read, and nothing
-// is saved.
-const char* const kUnrepresentable =
-    "[Position] LimitX, LimitY, LimitZ or LimitZBack above 10, which the canonical rows cannot hold, so the "
-    "import defers";
-
+// rows take 0 to 10 metres.
 constexpr float kMaxCanonicalLimit = 10.0f;
+
+float Clamped(float limit) { return limit > kMaxCanonicalLimit ? kMaxCanonicalLimit : limit; }
 
 constexpr const char* kFileName = "ThiefHeadTracking.ini";
 
@@ -515,7 +512,6 @@ struct Tally {
     struct Run {
         int created = 0;
         int imported = 0;
-        int deferred = 0;
         int refused = 0;
         // Migrated files holding at least one default row.
         int with_default_rows = 0;
@@ -525,6 +521,7 @@ struct Tally {
     int with_pose_shaping_dropped = 0;
     int with_reticle_dropped = 0;
     int with_follows_default = 0;
+    int with_limit_clamped = 0;
     // Inputs where the player changed at least one row, and where they changed the tracking mode.
     int touched = 0;
     int mode_touched = 0;
@@ -578,8 +575,24 @@ void CheckDrops(const std::string& name, const legacy::Config& l, const ImportRe
           name + ": [Collision] Enabled dropped does not match its value");
     if (follows) ++tally.with_follows_default;
 
+    const std::pair<const char*, float> limits[] = {
+        {"LimitX", l.pos_limit_x}, {"LimitY", l.pos_limit_y}, {"LimitZ", l.pos_limit_z}, {"LimitZBack", l.pos_limit_z_back}};
+    bool anyClamped = false;
+    for (const auto& [key, value] : limits) {
+        const DroppedValue* clamp = FindDrop(imported.dropped, DropRule::NumberOutOfRange, "Position", key);
+        Check((clamp != nullptr) == (value > kMaxCanonicalLimit),
+              name + ": [Position] " + key + (clamp ? " is clamped inside the range" : " is above 10 and not clamped"));
+        if (clamp) {
+            Check(std::stof(clamp->value) == value,
+                  name + ": [Position] " + key + " is recorded as " + clamp->value + ", not the value read");
+            anyClamped = true;
+        }
+    }
+    if (anyClamped) ++tally.with_limit_clamped;
+
     for (const DroppedValue& d : imported.dropped) {
-        Check(d.rule == DropRule::PoseShaping || d.rule == DropRule::Reticle || d.rule == DropRule::FollowsDefault,
+        Check(d.rule == DropRule::PoseShaping || d.rule == DropRule::Reticle || d.rule == DropRule::FollowsDefault ||
+                  d.rule == DropRule::NumberOutOfRange,
               name + ": the import drops [" + d.section + "] " + d.key + " by a rule this map never applies");
     }
 }
@@ -649,7 +662,8 @@ std::string Names(const ConceptSet& rows) {
 // The settings the mod starts on after the migration against the ones the frozen reader's build
 // started on, with the approved changes applied: identity pose shaping (CheckDrops holds the
 // import to recording every value it leaves out), no reticle switch, and a lean clamp the player
-// switched on kept on. The frozen reader's build applied its one LimitY both ways. A row in
+// switched on kept on. The frozen reader's build applied its one LimitY both ways, and a limit above
+// 10 starts at 10 (N4). A row in
 // `follows` runs on `d`, what Defaults.ini gives, instead of the legacy value.
 std::vector<std::string> StartupDifferences(const legacy::Config& l, const Config& m, const ConceptSet& follows,
                                             const Config& d) {
@@ -678,12 +692,12 @@ std::vector<std::string> StartupDifferences(const legacy::Config& l, const Confi
     number(Concept::RemoteSmoothing, m.remote_smoothing, l.remote_smoothing, d.remote_smoothing, "RemoteSmoothing");
     number(Concept::RemoteSmoothing, m.position.remote_smoothing, l.remote_smoothing, d.position.remote_smoothing,
            "RemoteSmoothing (position)");
-    number(Concept::PositionLimitX, m.position.limit_x, l.pos_limit_x, d.position.limit_x, "PositionLimitX");
-    number(Concept::PositionLimitY, m.position.limit_y, l.pos_limit_y, d.position.limit_y, "PositionLimitY");
-    number(Concept::PositionLimitYDown, m.position.limit_y_down, l.pos_limit_y, d.position.limit_y_down,
+    number(Concept::PositionLimitX, m.position.limit_x, Clamped(l.pos_limit_x), d.position.limit_x, "PositionLimitX");
+    number(Concept::PositionLimitY, m.position.limit_y, Clamped(l.pos_limit_y), d.position.limit_y, "PositionLimitY");
+    number(Concept::PositionLimitYDown, m.position.limit_y_down, Clamped(l.pos_limit_y), d.position.limit_y_down,
            "PositionLimitYDown");
-    number(Concept::PositionLimitZ, m.position.limit_z, l.pos_limit_z, d.position.limit_z, "PositionLimitZ");
-    number(Concept::PositionLimitZBack, m.position.limit_z_back, l.pos_limit_z_back, d.position.limit_z_back,
+    number(Concept::PositionLimitZ, m.position.limit_z, Clamped(l.pos_limit_z), d.position.limit_z, "PositionLimitZ");
+    number(Concept::PositionLimitZBack, m.position.limit_z_back, Clamped(l.pos_limit_z_back), d.position.limit_z_back,
            "PositionLimitZBack");
     // The clamp shipped off, so a legacy value that is not left to Defaults.ini is one the player
     // switched on.
@@ -709,11 +723,6 @@ std::vector<std::string> StartupDifferences(const legacy::Config& l, const Confi
     const thief_oracle_view::FireTable got = CurrentFires(m);
     if (expected != got) diff.push_back("hotkeys: " + FirstFireDifference(expected, got));
     return diff;
-}
-
-bool Unrepresentable(const legacy::Config& l) {
-    return l.pos_limit_x > kMaxCanonicalLimit || l.pos_limit_y > kMaxCanonicalLimit ||
-           l.pos_limit_z > kMaxCanonicalLimit || l.pos_limit_z_back > kMaxCanonicalLimit;
 }
 
 // Every field the table binds, as the canonical renderer writes it, so two Configs compare whole.
@@ -781,22 +790,12 @@ void Comparison2(Scratch& scratch, const Input& input, const ImportRun& import, 
         if (!untouched.count(Concept::PositionEnabled)) ++tally.mode_touched;
     }
 
-    // Imported or deferred, the session runs on the settings the load hands back: Defaults.ini's
+    // The session runs on the settings the load hands back: Defaults.ini's
     // on each row the player never changed, the import's on the rest.
     {
         const std::vector<std::string> d =
             StartupDifferences(import.config, loaded.config, follows, builtin ? g_builtinConfig : g_alteredConfig);
         Check(d.empty(), name + ": comparison 2: " + Join(d));
-    }
-
-    if (Unrepresentable(import.config)) {
-        ++run.deferred;
-        Check(loaded.status == ConfigLoadStatus::Deferred,
-              name + ": " + kUnrepresentable + ", but the load is " + cfg::ConfigLoadStatusName(loaded.status));
-        Check(after.files == Files{{kFileName, *input.bytes}}, name + ": a deferred import created CameraUnlock.ini or another file");
-        Check(loaded.reason.find("cannot be converted") != std::string::npos,
-              name + ": the player is not told which value stops the import: " + loaded.reason);
-        return;
     }
 
     ++run.imported;
@@ -961,10 +960,8 @@ int main() {
         for (const auto& [over, run] : {std::pair<const char*, const Tally::Run*>{"at the built-in values", &tally.builtin},
                                         std::pair<const char*, const Tally::Run*>{"changed", &tally.altered}}) {
             std::printf("  over Defaults.ini %s: %d created, %d imported (%d holding a default row, %d a value), "
-                        "%d deferred, %d refused as dev refused them\n",
-                        over, run->created, run->imported, run->with_default_rows, run->with_values, run->deferred,
-                        run->refused);
-            Check(run->deferred > 0, std::string("no input is deferred over ") + over);
+                        "%d refused as dev refused them\n",
+                        over, run->created, run->imported, run->with_default_rows, run->with_values, run->refused);
             Check(run->refused > 0, std::string("no input is refused over ") + over);
             Check(run->with_default_rows > 0, std::string("no import writes default over ") + over);
             Check(run->with_values > 0, std::string("no import writes a value over ") + over);
@@ -974,10 +971,11 @@ int main() {
         std::printf("  %d with MoveCrosshair=false dropped (reticle)\n", tally.with_reticle_dropped);
         std::printf("  %d with [Collision] Enabled=false following the default (follows_default)\n",
                     tally.with_follows_default);
-        std::printf("  deferred: %s\n", kUnrepresentable);
+        std::printf("  %d with a [Position] limit above 10 clamped to 10 (N4)\n", tally.with_limit_clamped);
         Check(tally.with_pose_shaping_dropped > 0, "no input drops a changed pose-shaping value");
         Check(tally.with_reticle_dropped > 0, "no input drops MoveCrosshair");
         Check(tally.with_follows_default > 0, "no input has [Collision] Enabled follow the default");
+        Check(tally.with_limit_clamped > 0, "no input clamps a [Position] limit above 10");
         std::printf("  %d with a row the player changed, %d of them the tracking mode\n", tally.touched,
                     tally.mode_touched);
         Check(tally.touched > 0 && tally.mode_touched > 0, "no input changes a row, or none the tracking mode");

@@ -20,12 +20,15 @@
 #include "zoom_factor.h"
 
 #include "cameraunlock/camera/zoom_compensation.h"
+#include "cameraunlock/time/qpc_clock.h"
 
 #include <windows.h>
 #include <intrin.h>
 
 #include <cmath>
 #include <cstring>
+#include <cstdio>
+#include <cstdlib>
 
 #pragma intrinsic(_ReturnAddress)
 
@@ -61,9 +64,9 @@ CalcSceneView_t g_origCalcSceneView = nullptr;
 GetPlayerViewPoint_t g_origGetViewPoint = nullptr;
 TrackingRuntime* g_tracking = nullptr;
 
-// Eases the lean out while the bow is drawn in sights locked. Touched only from the viewpoint
-// detour, which runs on the game thread for the scene-view caller alone, so it needs no
-// synchronisation of its own - the same restriction TrackingRuntime::SampleFrame relies on.
+// Eases the lean out while the bow is drawn in sights locked. Touched only from the viewpoint detour, which
+// runs on the game thread for the scene-view caller alone, so it needs no synchronisation
+// of its own - the same restriction TrackingRuntime::SampleFrame relies on.
 LeanEase g_leanEase;
 
 // Everything the detours read that is only known once the build profile is matched and
@@ -321,6 +324,85 @@ void ApplyHeadRotation(const FrameSample& s, const UE3Rotator& clean, bool world
                         s.roll, worldSpaceYaw, rot);
 }
 
+// ===== LAB PROBE (temporary, never committed) =====
+namespace labprobe {
+using BeginDeferred_t = void(__fastcall*)(void*);
+std::uintptr_t g_base = 0;
+bool g_haveBase = false;
+float g_baseT[3] = {0, 0, 0};
+std::uint8_t* g_mesh = nullptr;
+unsigned long long g_lastLog = 0;
+std::uint32_t g_lastBits[8] = {};
+int Mode() {
+    static unsigned long long s_checked = 0;
+    static int s_mode = 0;
+    const unsigned long long now = GetTickCount64();
+    if (now - s_checked > 1000) {
+        s_checked = now;
+        char path[MAX_PATH];
+        GetModuleFileNameA(nullptr, path, MAX_PATH);
+        char* slash = strrchr(path, 92);
+        if (slash) strcpy_s(slash + 1, MAX_PATH - (slash + 1 - path), "ThiefLabRig.txt");
+        FILE* f = nullptr;
+        s_mode = 0;
+        if (fopen_s(&f, path, "r") == 0 && f) {
+            char buf[16] = {};
+            fgets(buf, sizeof(buf), f);
+            fclose(f);
+            s_mode = atoi(buf);
+        }
+    }
+    return s_mode;
+}
+std::uint8_t* Ptr(const void* p, std::uint32_t off) {
+    const auto a = reinterpret_cast<std::uintptr_t>(p) + off;
+    if (!ReadableSpan(a, 8)) return nullptr;
+    const auto v = *reinterpret_cast<const std::uintptr_t*>(a);
+    if (!Readable(v, 0x200)) return nullptr;
+    return reinterpret_cast<std::uint8_t*>(v);
+}
+void Restore() {
+    if (g_haveBase && g_mesh && Readable(reinterpret_cast<std::uintptr_t>(g_mesh), 0x1D0)) {
+        float* t = reinterpret_cast<float*>(g_mesh + 0x1C0);
+        t[0] = g_baseT[0]; t[1] = g_baseT[1]; t[2] = g_baseT[2];
+        reinterpret_cast<BeginDeferred_t>(g_base + 0x2B3080)(g_mesh);
+    }
+    g_haveBase = false;
+}
+// Returns true when the lean went to the mesh instead of the camera.
+bool Frame(void* controller, const UE3Vector& cleanEye, const UE3Rotator& clean, bool aiming, float lateral) {
+    std::uint8_t* pawn = Ptr(controller, 0x294);
+    std::uint8_t* mesh = pawn ? Ptr(pawn, 0x444) : nullptr;
+    std::uint8_t* comp = pawn ? Ptr(pawn, 0x11AC) : nullptr;
+    const unsigned long long now = GetTickCount64();
+    std::uint32_t bits[8] = {};
+    if (comp) for (int i = 0; i < 8; ++i) bits[i] = *reinterpret_cast<std::uint32_t*>(comp + 0xA8 + 4 * i);
+    const bool changed = std::memcmp(bits, g_lastBits, sizeof(bits)) != 0;
+    if (changed || now - g_lastLog > 500) {
+        g_lastLog = now;
+        std::memcpy(g_lastBits, bits, sizeof(bits));
+        const float* t = mesh ? reinterpret_cast<const float*>(mesh + 0x1C0) : nullptr;
+        Log::Line("LAB pawn=%p mesh=%p comp=%p eye=(%.1f %.1f %.1f) yaw=%d aim=%d meshT=(%.2f %.2f %.2f) "
+                  "c[A8..C4]=%08X %08X %08X %08X %08X %08X %08X %08X lat=%.1f mode=%d%s",
+                  pawn, mesh, comp, cleanEye.X, cleanEye.Y, cleanEye.Z, clean.Yaw, aiming ? 1 : 0,
+                  t ? t[0] : 0.f, t ? t[1] : 0.f, t ? t[2] : 0.f,
+                  bits[0], bits[1], bits[2], bits[3], bits[4], bits[5], bits[6], bits[7], lateral, Mode(),
+                  changed ? " CHANGED" : "");
+    }
+    if (Mode() != 1 || mesh == nullptr) {
+        Restore();
+        return false;
+    }
+    if (mesh != g_mesh) { Restore(); g_mesh = mesh; }
+    float* t = reinterpret_cast<float*>(mesh + 0x1C0);
+    if (!g_haveBase) { g_baseT[0] = t[0]; g_baseT[1] = t[1]; g_baseT[2] = t[2]; g_haveBase = true; }
+    t[0] = g_baseT[0]; t[1] = g_baseT[1] + lateral; t[2] = g_baseT[2];
+    reinterpret_cast<BeginDeferred_t>(g_base + 0x2B3080)(mesh);
+    return true;
+}
+}  // namespace labprobe
+// ===== END LAB PROBE =====
+
 void __fastcall GetPlayerViewPointDetour(void* self, void* outLoc, void* outRot) {
     const auto caller = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
 
@@ -357,6 +439,7 @@ void __fastcall GetPlayerViewPointDetour(void* self, void* outLoc, void* outRot)
     ReportGate(gate, fov);
     if (gate != 0) {
         g_leanEase.Reset();
+        labprobe::Restore();
         StandDown();
         return;
     }
@@ -364,17 +447,26 @@ void __fastcall GetPlayerViewPointDetour(void* self, void* outLoc, void* outRot)
     FrameSample s = tracking->SampleFrame();
     if (!s.has_rotation && !s.has_position) {
         g_leanEase.Reset();
+        labprobe::Restore();
         StandDown();
         return;
     }
 
     const float zoom = ZoomFactor(fov, baseFov);
+    labprobe::g_base = g_hook.moduleBase;
+    const bool probeMesh = labprobe::Mode() == 1;
 
     float leanRuf[3] = { 0.0f, 0.0f, 0.0f };
     if (s.has_position) {
         // Polled from the game every frame rather than latched, so a missed edge heals on
         // the next one. Rotation is deliberately left out of this.
-        const float leanScale = g_leanEase.Update(aiming, tracking->IsTrueFreeLook(), GetTickCount64());
+        float leanScale = 1.0f;
+        if (probeMesh) {
+            g_leanEase.Reset();
+        } else {
+            leanScale = g_leanEase.Update(aiming, tracking->IsTrueFreeLook(),
+                                          cameraunlock::time::QpcNowMicros() / 1000);
+        }
         s.pos_x *= leanScale;
         s.pos_y *= leanScale;
         s.pos_z *= leanScale;
@@ -382,6 +474,12 @@ void __fastcall GetPlayerViewPointDetour(void* self, void* outLoc, void* outRot)
     } else {
         g_leanEase.Reset();
         ResetCameraCollision();
+    }
+    // The probe takes the lean after the collision clamp, so the mesh never carries more
+    // than the camera would have, and the camera goes back to the clean eye.
+    if (labprobe::Frame(self, cleanEye, clean, aiming, leanRuf[0])) {
+        *loc = cleanEye;
+        leanRuf[0] = leanRuf[1] = leanRuf[2] = 0.0f;
     }
     if (s.has_rotation) {
         ApplyHeadRotation(s, clean, tracking->IsWorldSpaceYaw(), zoom, rot);

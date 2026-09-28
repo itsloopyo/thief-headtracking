@@ -78,12 +78,16 @@ ImportResult Import(const LegacyInput& input, Config& out) {
     out.remote_smoothing = c.remote_smoothing;
     out.position.remote_smoothing = c.remote_smoothing;
 
-    // The old file had one vertical limit, which the old runtime applied both ways.
-    out.position.limit_x = c.pos_limit_x;
-    out.position.limit_y = c.pos_limit_y;
-    out.position.limit_y_down = c.pos_limit_y;
-    out.position.limit_z = c.pos_limit_z;
-    out.position.limit_z_back = c.pos_limit_z_back;
+    // The old file had one vertical limit, which the old runtime applied both ways. The frozen
+    // reader bounded the limits below only, so one above the canonical range is clamped (N4).
+    using cameraunlock::config::LegacyClampToRange;
+    using cameraunlock::config::schema::Concept;
+    out.position.limit_x = LegacyClampToRange<Concept::PositionLimitX>(c.pos_limit_x, "Position", "LimitX", dropped);
+    out.position.limit_y = LegacyClampToRange<Concept::PositionLimitY>(c.pos_limit_y, "Position", "LimitY", dropped);
+    out.position.limit_y_down = out.position.limit_y;
+    out.position.limit_z = LegacyClampToRange<Concept::PositionLimitZ>(c.pos_limit_z, "Position", "LimitZ", dropped);
+    out.position.limit_z_back =
+        LegacyClampToRange<Concept::PositionLimitZBack>(c.pos_limit_z_back, "Position", "LimitZBack", dropped);
 
     // The lean clamp shipped switched off pending verification in this game, so it takes the
     // table's default (approved change follows_default).
@@ -130,8 +134,7 @@ ImportResult Import(const LegacyInput& input, Config& out) {
 
     // A setting the player never changed from what the published build shipped follows
     // Defaults.ini. LimitY stood for both vertical bounds, and each hotkey for its code and its
-    // chord switch together.
-    using cameraunlock::config::schema::Concept;
+    // chord switch together. A limit is compared as read, before N4 clamps it.
     const legacy::Config shipped;
     cameraunlock::config::LegacyFollowsDefaultsIni follows;
     follows.Setting(Concept::UdpPort, c.udp_port, shipped.udp_port);
