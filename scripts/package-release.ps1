@@ -37,6 +37,24 @@ $releaseDir = Join-Path $projectRoot 'release'
 Import-Module (Join-Path $projectRoot 'cameraunlock-core\powershell\ReleaseWorkflow.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Version.psm1') -Force
 
+# Not Get-FileHash: Windows PowerShell 5.1 autoloads it from a script module,
+# and a powershell.exe started from pwsh (GitHub Actions' shell: pwsh)
+# inherits pwsh's PSModulePath, resolves the Core-only
+# Microsoft.PowerShell.Utility first and reports the cmdlet as not recognized.
+function Get-Sha256Hex {
+    [OutputType([string])]
+    param([Parameter(Mandatory)][string]$LiteralPath)
+
+    $sha    = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::OpenRead((Convert-Path -LiteralPath $LiteralPath))
+    try {
+        return [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $stream.Dispose()
+        $sha.Dispose()
+    }
+}
+
 $version = Get-ModVersion -ProjectRoot $projectRoot
 
 Write-Host '=== Thief Head Tracking - Package Release ===' -ForegroundColor Magenta
@@ -70,9 +88,9 @@ $recordedHash = [regex]::Match(
 if (-not $recordedHash) {
     throw "vendor/ultimate-asi-loader/README.md records no 'dinput8.dll SHA-256' line, so the shipped loader cannot be verified. Run 'pixi run update-deps' and commit the result."
 }
-$actualHash = (Get-FileHash -LiteralPath $vendorLoaderDll -Algorithm SHA256).Hash
-if ($actualHash -ne $recordedHash.ToUpperInvariant()) {
-    throw "vendor/ultimate-asi-loader/dinput8.dll does not match the SHA-256 recorded beside it (recorded $($recordedHash.ToLowerInvariant()), found $($actualHash.ToLowerInvariant())). Refusing to package a loader nothing in the repo vouches for."
+$actualHash = Get-Sha256Hex -LiteralPath $vendorLoaderDll
+if ($actualHash -ne $recordedHash.ToLowerInvariant()) {
+    throw "vendor/ultimate-asi-loader/dinput8.dll does not match the SHA-256 recorded beside it (recorded $($recordedHash.ToLowerInvariant()), found $actualHash). Refusing to package a loader nothing in the repo vouches for."
 }
 Write-Host "  vendored loader verified against its recorded SHA-256" -ForegroundColor Green
 

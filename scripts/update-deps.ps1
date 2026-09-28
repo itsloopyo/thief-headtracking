@@ -29,6 +29,24 @@ if (-not (Test-Path $modulePath)) {
 }
 Import-Module $modulePath -Force
 
+# Not Get-FileHash: Windows PowerShell 5.1 autoloads it from a script module,
+# and a powershell.exe started from pwsh (GitHub Actions' shell: pwsh)
+# inherits pwsh's PSModulePath, resolves the Core-only
+# Microsoft.PowerShell.Utility first and reports the cmdlet as not recognized.
+function Get-Sha256Hex {
+    [OutputType([string])]
+    param([Parameter(Mandatory)][string]$LiteralPath)
+
+    $sha    = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::OpenRead((Convert-Path -LiteralPath $LiteralPath))
+    try {
+        return [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $stream.Dispose()
+        $sha.Dispose()
+    }
+}
+
 # --- CALL BLOCK ----------------------------------------------------------
 # The game runs in the 64-bit Shipping-ThiefGame.exe, so it needs Ultimate ASI Loader x64. That release asset
 # (Ultimate-ASI-Loader_x64.zip) is a wrapper zip containing a single x64
@@ -46,7 +64,7 @@ $readme    = Join-Path $vendorDir 'README.md'
 # so that check can never fire for this mod. Without the snapshot below, every
 # run rewrites README.md with a fresh Fetched-at and dirties the tree on a
 # no-op refresh.
-$priorDllHash     = if (Test-Path $saved)  { (Get-FileHash -Path $saved -Algorithm SHA256).Hash.ToLowerInvariant() } else { $null }
+$priorDllHash     = if (Test-Path $saved)  { Get-Sha256Hex -LiteralPath $saved } else { $null }
 $priorReadmeBytes = if (Test-Path $readme) { [System.IO.File]::ReadAllBytes($readme) } else { $null }
 
 Update-VendoredLoader `
@@ -83,7 +101,7 @@ if ($bytes.Length -ge 2 -and $bytes[0] -eq 0x50 -and $bytes[1] -eq 0x4B) {
     Write-Host "Unwrapped x64 dinput8.dll from the release zip." -ForegroundColor Green
 }
 
-$dllHash = (Get-FileHash -Path $saved -Algorithm SHA256).Hash.ToLowerInvariant()
+$dllHash = Get-Sha256Hex -LiteralPath $saved
 
 if ($priorReadmeBytes -and $priorDllHash -eq $dllHash) {
     # Byte for byte, so a run against an unchanged upstream leaves
