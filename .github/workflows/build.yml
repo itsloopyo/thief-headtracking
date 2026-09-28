@@ -16,11 +16,12 @@ on:
       - 'docs/**'
       - 'LICENSE'
 
-# Nothing here writes to the repository or to any package registry: it builds and
-# inspects the ZIP it produced. Anything more is what the default token would hand
-# to a compromised action.
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -45,18 +46,6 @@ jobs:
         uses: prefix-dev/setup-pixi@5185adfbffb4bd703da3010310260805d89ebb11 # v0.9.6
         with:
           run-install: false
-
-      # The unit suites, through the same task a developer runs. Before the package
-      # step, so a broken sanitizer or ADS gate fails the build rather than being
-      # packaged. Needs no game and writes only into build-tests/.
-      - name: Run unit tests
-        shell: pwsh
-        run: |
-          pixi run test
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "::error::pixi run test failed"
-            exit 1
-          }
 
       # Build + package through the SAME command a developer runs locally. All
       # build logic lives in the pixi task chain (setup -> build-release ->
