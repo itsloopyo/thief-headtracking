@@ -112,7 +112,7 @@ Head tracking stays on while you draw the bow. The bow stays where your mouse or
 
 By default leaning never takes your eye off the bow's aim: leaning eases out while the bow is drawn, because it would move your eye off the arrow's line. On the current build the mod cannot yet see the bow being drawn, so the lean stays in.
 
-`Insert` / `Ctrl+Shift+U` switches to **true free look**: the bow stays put and your head moves freely around it, so to line up the shot you have to put your head behind it, as you would in VR. It is hard, and it is off by default. The mod saves the mode you pick, so it holds the next time you start the game.
+`Insert` / `Ctrl+Shift+U` switches to **true free look**: the bow stays put and your head moves freely around it, so to line up the shot you have to put your head behind it, as you would in VR. It is hard, and it is off by default. The mod saves the mode you pick, so it holds the next time you start the game. Until the mod can see the bow being drawn, the lean stays in either way, so the two modes look the same.
 
 ## Configuration
 
